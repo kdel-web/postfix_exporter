@@ -1,22 +1,20 @@
 # Prometheus Postfix exporter
 
-```
-PLEASE NOTE: The kumina/postfix_exporter has been updated and adapted to more accurately represent WebstaurantStore's implementation of Postfix and SMTP mailflow. 
 
-The most significant changes are modifications to the original program's parsing of log lines, and the clean up of seemingly unmaintained third party dependencies, however, the changes are not relegated to these two examples.
+__PLEASE NOTE__: The [kumina/postfix_exporter](https://github.com/kumina/postfix_exporter) has been modified to more accurately represent a specific deployment/implementation of Postfix SMTP servers.
+
+The most significant changes are modifications to the original program's parsing of log lines, and the clean up of infrequently updated third party libraries, however, the changes are not relegated to these two examples.
 
 Other source files and portions of code deemed irrelevant have been removed.
 Documentation notes below may not be entirely correct. Please review source code for the most up to date information.
-```
 
 
 Prometheus metrics exporter for [the Postfix mail server](http://www.postfix.org/).
 This exporter provides histogram metrics for the size and age of messages stored in
 the mail queue. It extracts these metrics from Postfix by connecting to
-a UNIX socket under `/var/spool`. It also counts events by parsing Postfix's
-log entries, using regular expression matching. The log entries are retrieved from
-the systemd journal, the Docker logs, or from a log file.
-### The __log file__ (`/var/log/maillog`) continues to be the primary source of events/metrics.
+a UNIX socket under `/var/spool/postfix/public/showq`. It also counts events by parsing Postfix's
+log entries, using regular expression matching. The log entries are retrieved from a log file and the Postfix aforementioned socket.
+
 
 ## Options
 
@@ -24,17 +22,17 @@ These options can be used when starting the `postfix_exporter`
 
 | Flag                     | Description                                          | Default                           |
 |--------------------------|------------------------------------------------------|-----------------------------------|
-| `--web.listen-address`   | Address to listen on for web interface and telemetry | `9154`** changing                 |
+| `--web.listen-address`   | Address to listen on for web interface and telemetry | `9003`                            |
 | `--web.telemetry-path`   | Path under which to expose metrics                   | `/metrics`                        |
 | `--postfix.showq_path`   | Path at which Postfix places its showq socket        | `/var/spool/postfix/public/showq` |
-| `--postfix.logfile_path` | Path where Postfix writes log entries                | `/var/log/mail.log`** changing    |
-| `--log.unsupported`      | Log all unsupported lines                            | `false`** changing                |
-| ~~`--docker.enable`      | Read from the Docker logs instead of a file          | `false`~~ removed                 |
-| ~ docker.container.id  | The container to read Docker logs from               | `postfix`~ removed/irrelevant    |
-| `--systemd.enable`       | Read from the systemd journal instead of file        | `false`** removing or updating    |
-| `--systemd.unit`         | Name of the Postfix systemd unit                     | `postfix.service`**               |
-| `--systemd.slice`        | Name of the Postfix systemd slice.                   | `""`**                            |
-| `--systemd.journal_path` | Path to the systemd journal                          | `""`**                            |
+| `--postfix.logfile_path` | Path where Postfix writes log entries                | `/var/log/maillog`                |
+| `--log.unsupported`      | Log all unsupported lines                            | `false`** adapting TBD            |
+| ~~--docker.enable~~      | ~~Read from the Docker logs instead of a file~~      | ~~false`~~ removed                |
+| ~~docker.container.id~~  | ~~The container to read Docker logs from~~           | ~~postfix~~ removed               |
+| `--systemd.enable`       | Read from the systemd journal instead of file        | `false` **not yet implemented     |
+| `--systemd.unit`         | Name of the Postfix systemd unit                     | `postfix.service`**same as above  |
+| `--systemd.slice`        | Name of the Postfix systemd slice.                   | `""`**same as above               |
+| `--systemd.journal_path` | Path to the systemd journal                          | `""`**same as above               |
 
 ~~## Events from Docker~~
 
@@ -55,6 +53,7 @@ is running is OK. The path to the log file is specified with the
 `--postfix.logfile_path` flag.
 
 ## Events from systemd
+## Not currently implemented.
 
 Retrieval from the systemd journal is enabled with the `--systemd.enable` flag.
 This overrides the log file setting.

@@ -1,3 +1,11 @@
+/////////////////////////////////////////////////////////////////////////
+// PROGRAM HAS BEEN MODIFIED FROM ITS ORIGINAL IMPLEMENTATION
+// PLEASE REVIEW README.md
+// **
+// **Original copyright and licensing information has been retained,
+// **though the application has been modified to fit specific implementation criteria
+////////////////////////////////////////////////////////////////////////////
+
 // Copyright 2017 Kumina, https://kumina.nl/
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -40,9 +48,9 @@ var (
 // PostfixExporter holds the state that should be preserved by the
 // Postfix Prometheus metrics exporter across scrapes.
 type PostfixExporter struct {
-	showqPath           string
-	logSrc              LogSource
-	logUnsupportedLines bool
+	targetShowqPath string
+	targetLogfile   string
+	//logUnsupportedLines bool // unsure about this at current time
 
 	// Metrics that should persist after refreshes, based on logs.
 	cleanupProcesses                prometheus.Counter
@@ -57,8 +65,7 @@ type PostfixExporter struct {
 	smtpDelays                      *prometheus.HistogramVec
 	smtpTLSConnects                 *prometheus.CounterVec
 	smtpConnectionTimedOut          prometheus.Counter
-	smtpProcesses                    *prometheus.CounterVec
-	// should be the same as smtpProcesses{status=deferred}, kept for compatibility, but this doesn't work !
+	smtpProcesses                   *prometheus.CounterVec
 	smtpDeferreds                   prometheus.Counter
 	smtpdConnects                   prometheus.Counter
 	smtpdDisconnects                prometheus.Counter
@@ -69,7 +76,6 @@ type PostfixExporter struct {
 	smtpdSASLAuthenticationFailures prometheus.Counter
 	smtpdTLSConnects                *prometheus.CounterVec
 	unsupportedLogEntries           *prometheus.CounterVec
-	// same as smtpProcesses{status=deferred}, kept for compatibility
 	smtpStatusDeferred              prometheus.Counter
 	opendkimSignatureAdded          *prometheus.CounterVec
 	bounceNonDelivery               prometheus.Counter

@@ -69,6 +69,7 @@ func main() {
 
 	go exporter.StartMetricCollection(ctx)
 	infoLine("Started goroutine for metric collection")
+
 	log.Print("Listening on ", *targetListenAddr)
 	log.Fatal(http.ListenAndServe(*targetListenAddr, nil))
 }
