@@ -1,10 +1,10 @@
-/////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
 // PROGRAM HAS BEEN MODIFIED FROM ITS ORIGINAL IMPLEMENTATION
 // PLEASE REVIEW README.md
 // **
-// **Original copyright and licensing information has been retained,
-// **though the application has been modified to fit specific implementation criteria
-////////////////////////////////////////////////////////////////////////////
+// Original copyright and licensing information has been retained,
+// though the application has been modified to fit specific implementation criteria
+//////////////////////////////////////////////////////////////////////////////////////
 
 // Copyright 2017 Kumina, https://kumina.nl/
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,59 +38,49 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+const (
+	// primarily to prevent typos in code below
+	// also for maintainbility perhaps etc
+	postfixNamespace = "Postfix"
+	postSmtpd        = "postfix/smtpd"
+	postNoQueue      = "NOQUEUE"
+	postFast         = "postfix-fast/smtp"
+	postSlow         = "postfix-slow/smtp"
+	postMed          = "postfix-medium/smtp"
+	postRes          = "postfix-restrictive/smtp"
+	postSent         = "status=sent"
+	postDefer        = "status=deferred"
+	postBounce       = "status=bounced"
+)
+
 var (
 	postfixUpDesc = prometheus.NewDesc(
 		prometheus.BuildFQName("postfix", "", "up"),
 		"Whether scraping Postfix's metrics was successful.",
 		[]string{"path"}, nil)
+
+	// Added parsing patterns.
+	msgLineMatch   = regexp.MustCompile(`(postfix(-slow|-fast|-medium|-restrictive)?\/(smtpd?|scache|cleanup|qmgr|bounce|error|warning|fatal|panic))`)
+	msgIDMatch     = regexp.MustCompile(`\s([A-F0-9]{6,}):`)
+	emailAddrMatch = regexp.MustCompile(`<(.*?@?.*?)>:`)
+
+	// Previous patterns for parsing log messages.
+	logLine                             = regexp.MustCompile(` ?(postfix|opendkim)(/(\w+))?\[\d+\]: ((?:(warning|error|fatal|panic): )?.*)`)
+	lmtpPipeSMTPLine                    = regexp.MustCompile(`, relay=(\S+), .*, delays=([0-9\.]+)/([0-9\.]+)/([0-9\.]+)/([0-9\.]+), `)
+	qmgrInsertLine                      = regexp.MustCompile(`:.*, size=(\d+), nrcpt=(\d+) `)
+	qmgrExpiredLine                     = regexp.MustCompile(`:.*, status=(expired|force-expired), returned to sender`)
+	smtpStatusLine                      = regexp.MustCompile(`, status=(\w+) `)
+	smtpTLSLine                         = regexp.MustCompile(`^(\S+) TLS connection established to \S+: (\S+) with cipher (\S+) \((\d+)/(\d+) bits\)`)
+	smtpConnectionTimedOut              = regexp.MustCompile(`^connect\s+to\s+(.*)\[(.*)\]:(\d+):\s+(Connection timed out)$`)
+	smtpdFCrDNSErrorsLine               = regexp.MustCompile(`^warning: hostname \S+ does not resolve to address `)
+	smtpdProcessesSASLLine              = regexp.MustCompile(`: client=.*, sasl_method=(\S+)`)
+	smtpdRejectsLine                    = regexp.MustCompile(`^NOQUEUE: reject: RCPT from \S+: ([0-9]+) `)
+	smtpdLostConnectionLine             = regexp.MustCompile(`^lost connection after (\w+) from `)
+	smtpdSASLAuthenticationFailuresLine = regexp.MustCompile(`^warning: \S+: SASL \S+ authentication failed: `)
+	smtpdTLSLine                        = regexp.MustCompile(`^(\S+) TLS connection established from \S+: (\S+) with cipher (\S+) \((\d+)/(\d+) bits\)`)
+	opendkimSignatureAdded              = regexp.MustCompile(`^[\w\d]+: DKIM-Signature field added \(s=(\w+), d=(.*)\)$`)
+	bounceNonDeliveryLine               = regexp.MustCompile(`: sender non-delivery notification: `)
 )
-
-// PostfixExporter holds the state that should be preserved by the
-// Postfix Prometheus metrics exporter across scrapes.
-type PostfixExporter struct {
-	targetShowqPath string
-	targetLogfile   string
-	//logUnsupportedLines bool // unsure about this at current time
-
-	// Metrics that should persist after refreshes, based on logs.
-	cleanupProcesses                prometheus.Counter
-	cleanupRejects                  prometheus.Counter
-	cleanupNotAccepted              prometheus.Counter
-	lmtpDelays                      *prometheus.HistogramVec
-	pipeDelays                      *prometheus.HistogramVec
-	qmgrInsertsNrcpt                prometheus.Histogram
-	qmgrInsertsSize                 prometheus.Histogram
-	qmgrRemoves                     prometheus.Counter
-	qmgrExpires                     prometheus.Counter
-	smtpDelays                      *prometheus.HistogramVec
-	smtpTLSConnects                 *prometheus.CounterVec
-	smtpConnectionTimedOut          prometheus.Counter
-	smtpProcesses                   *prometheus.CounterVec
-	smtpDeferreds                   prometheus.Counter
-	smtpdConnects                   prometheus.Counter
-	smtpdDisconnects                prometheus.Counter
-	smtpdFCrDNSErrors               prometheus.Counter
-	smtpdLostConnections            *prometheus.CounterVec
-	smtpdProcesses                  *prometheus.CounterVec
-	smtpdRejects                    *prometheus.CounterVec
-	smtpdSASLAuthenticationFailures prometheus.Counter
-	smtpdTLSConnects                *prometheus.CounterVec
-	unsupportedLogEntries           *prometheus.CounterVec
-	smtpStatusDeferred              prometheus.Counter
-	opendkimSignatureAdded          *prometheus.CounterVec
-	bounceNonDelivery               prometheus.Counter
-	virtualDelivered                prometheus.Counter
-}
-
-// A LogSource is an interface to read log lines.
-type LogSource interface {
-	// Path returns a representation of the log location.
-	Path() string
-
-	// Read returns the next log line. Returns `io.EOF` at the end of
-	// the log.
-	Read(context.Context) (string, error)
-}
 
 // CollectShowqFromReader parses the output of Postfix's 'showq' command
 // and turns it into metrics.
@@ -296,37 +286,21 @@ func CollectShowqFromSocket(path string, ch chan<- prometheus.Metric) error {
 	return CollectShowqFromReader(fd, ch)
 }
 
-// Patterns for parsing log messages.
-var (
-	logLine                             = regexp.MustCompile(` ?(postfix|opendkim)(/(\w+))?\[\d+\]: ((?:(warning|error|fatal|panic): )?.*)`)
-	lmtpPipeSMTPLine                    = regexp.MustCompile(`, relay=(\S+), .*, delays=([0-9\.]+)/([0-9\.]+)/([0-9\.]+)/([0-9\.]+), `)
-	qmgrInsertLine                      = regexp.MustCompile(`:.*, size=(\d+), nrcpt=(\d+) `)
-	qmgrExpiredLine                     = regexp.MustCompile(`:.*, status=(expired|force-expired), returned to sender`)
-	smtpStatusLine                      = regexp.MustCompile(`, status=(\w+) `)
-	smtpTLSLine                         = regexp.MustCompile(`^(\S+) TLS connection established to \S+: (\S+) with cipher (\S+) \((\d+)/(\d+) bits\)`)
-	smtpConnectionTimedOut              = regexp.MustCompile(`^connect\s+to\s+(.*)\[(.*)\]:(\d+):\s+(Connection timed out)$`)
-	smtpdFCrDNSErrorsLine               = regexp.MustCompile(`^warning: hostname \S+ does not resolve to address `)
-	smtpdProcessesSASLLine              = regexp.MustCompile(`: client=.*, sasl_method=(\S+)`)
-	smtpdRejectsLine                    = regexp.MustCompile(`^NOQUEUE: reject: RCPT from \S+: ([0-9]+) `)
-	smtpdLostConnectionLine             = regexp.MustCompile(`^lost connection after (\w+) from `)
-	smtpdSASLAuthenticationFailuresLine = regexp.MustCompile(`^warning: \S+: SASL \S+ authentication failed: `)
-	smtpdTLSLine                        = regexp.MustCompile(`^(\S+) TLS connection established from \S+: (\S+) with cipher (\S+) \((\d+)/(\d+) bits\)`)
-	opendkimSignatureAdded              = regexp.MustCompile(`^[\w\d]+: DKIM-Signature field added \(s=(\w+), d=(.*)\)$`)
-	bounceNonDeliveryLine               = regexp.MustCompile(`: sender non-delivery notification: `)
-)
-
 // CollectFromLogline collects metrict from a Postfix log line.
-func (e *PostfixExporter) CollectFromLogLine(line string) {
-	// Strip off timestamp, hostname, etc.
+func (e *PostfixCollector) CollectFromLogLine(line string) {
+	// the bread and butter babe, the sweet nectar jelly mumbo jumbo stew that be a-cookin in the kitchen
+
+	// Strip off timestamp, hostname, etc. // ? ... why
 	logMatches := logLine.FindStringSubmatch(line)
 
 	if logMatches == nil {
 		// Unknown log entry format.
-		e.addToUnsupportedLine(line, "", "")
+		// Unknown if relevant
+		e.msgsUnknownUnsupported.Inc()
 		return
 	}
 	process := logMatches[1]
-	level := logMatches[5]
+	// level := logMatches[5] // was only used for collecting unknown loglines. changed to counter
 	remainder := logMatches[4]
 	switch process {
 	case "postfix":
@@ -339,7 +313,7 @@ func (e *PostfixExporter) CollectFromLogLine(line string) {
 			} else if strings.Contains(remainder, ": reject: ") {
 				e.cleanupRejects.Inc()
 			} else {
-				e.addToUnsupportedLine(line, subprocess, level)
+				e.msgsUnknownUnsupported.Inc()
 			}
 		case "lmtp":
 			if lmtpMatches := lmtpPipeSMTPLine.FindStringSubmatch(remainder); lmtpMatches != nil {
@@ -348,7 +322,7 @@ func (e *PostfixExporter) CollectFromLogLine(line string) {
 				addToHistogramVec(e.lmtpDelays, lmtpMatches[4], "LMTP sdelay", "connection_setup")
 				addToHistogramVec(e.lmtpDelays, lmtpMatches[5], "LMTP xdelay", "transmission")
 			} else {
-				e.addToUnsupportedLine(line, subprocess, level)
+				e.msgsUnknownUnsupported.Inc()
 			}
 		case "pipe":
 			if pipeMatches := lmtpPipeSMTPLine.FindStringSubmatch(remainder); pipeMatches != nil {
@@ -357,7 +331,7 @@ func (e *PostfixExporter) CollectFromLogLine(line string) {
 				addToHistogramVec(e.pipeDelays, pipeMatches[4], "PIPE sdelay", pipeMatches[1], "connection_setup")
 				addToHistogramVec(e.pipeDelays, pipeMatches[5], "PIPE xdelay", pipeMatches[1], "transmission")
 			} else {
-				e.addToUnsupportedLine(line, subprocess, level)
+				e.msgsUnknownUnsupported.Inc()
 			}
 		case "qmgr":
 			if qmgrInsertMatches := qmgrInsertLine.FindStringSubmatch(remainder); qmgrInsertMatches != nil {
@@ -368,7 +342,7 @@ func (e *PostfixExporter) CollectFromLogLine(line string) {
 			} else if qmgrExpired := qmgrExpiredLine.FindStringSubmatch(remainder); qmgrExpired != nil {
 				e.qmgrExpires.Inc()
 			} else {
-				e.addToUnsupportedLine(line, subprocess, level)
+				e.msgsUnknownUnsupported.Inc()
 			}
 		case "smtp":
 			if smtpMatches := lmtpPipeSMTPLine.FindStringSubmatch(remainder); smtpMatches != nil {
@@ -387,7 +361,7 @@ func (e *PostfixExporter) CollectFromLogLine(line string) {
 			} else if smtpMatches := smtpConnectionTimedOut.FindStringSubmatch(remainder); smtpMatches != nil {
 				e.smtpConnectionTimedOut.Inc()
 			} else {
-				e.addToUnsupportedLine(line, subprocess, level)
+				e.msgsUnknownUnsupported.Inc()
 			}
 		case "smtpd":
 			if strings.HasPrefix(remainder, "connect from ") {
@@ -409,41 +383,43 @@ func (e *PostfixExporter) CollectFromLogLine(line string) {
 			} else if smtpdTLSMatches := smtpdTLSLine.FindStringSubmatch(remainder); smtpdTLSMatches != nil {
 				e.smtpdTLSConnects.WithLabelValues(smtpdTLSMatches[1:]...).Inc()
 			} else {
-				e.addToUnsupportedLine(line, subprocess, level)
+				e.msgsUnknownUnsupported.Inc()
 			}
 		case "bounce":
 			if bounceMatches := bounceNonDeliveryLine.FindStringSubmatch(remainder); bounceMatches != nil {
 				e.bounceNonDelivery.Inc()
 			} else {
-				e.addToUnsupportedLine(line, process, level)
+				e.msgsUnknownUnsupported.Inc()
 			}
 		case "virtual":
 			if strings.HasSuffix(remainder, ", status=sent (delivered to maildir)") {
 				e.virtualDelivered.Inc()
 			} else {
-				e.addToUnsupportedLine(line, process, level)
+				e.msgsUnknownUnsupported.Inc()
 			}
 		default:
-			e.addToUnsupportedLine(line, subprocess, level)
+			e.msgsUnknownUnsupported.Inc()
 		}
 	case "opendkim":
 		if opendkimMatches := opendkimSignatureAdded.FindStringSubmatch(remainder); opendkimMatches != nil {
 			e.opendkimSignatureAdded.WithLabelValues(opendkimMatches[1], opendkimMatches[2]).Inc()
 		} else {
-			e.addToUnsupportedLine(line, process, level)
+			e.msgsUnknownUnsupported.Inc()
 		}
 	default:
 		// Unknown log entry format.
-		e.addToUnsupportedLine(line, process, level)
+		e.msgsUnknownUnsupported.Inc()
 	}
 }
 
-func (e *PostfixExporter) addToUnsupportedLine(line string, subprocess string, level string) {
+/*
+func (e *PostfixCollector) addToUnsupportedLine(line string, subprocess string, level string) {
 	if e.logUnsupportedLines {
 		log.Printf("Unsupported Line: %v", line)
 	}
 	e.unsupportedLogEntries.WithLabelValues(subprocess, level).Inc()
 }
+*/
 
 func addToHistogram(h prometheus.Histogram, value, fieldName string) {
 	float, err := strconv.ParseFloat(value, 64)
@@ -460,13 +436,136 @@ func addToHistogramVec(h *prometheus.HistogramVec, value, fieldName string, labe
 	h.WithLabelValues(labels...).Observe(float)
 }
 
+// PostfixExporter holds the state that should be preserved by the
+// Postfix Prometheus metrics exporter across scrapes.*
+// * original comments retained *
+type PostfixCollector struct {
+	// PostfixCollector implements the prometheus.Collector interface
+	// is instantied with `NewPostfixCollector`, must then be registered
+
+	targetShowqPath string
+	targetLogfile   LogSource
+	//logUnsupportedLines bool
+	// translated to `msgsUnknownUnsuported` which presumably is irrelevant anyway
+
+	// Added Metrics
+	msgsUnknownUnsupported prometheus.Counter
+	msgsAcceptedIn         prometheus.Counter
+	msgsNoQueue            prometheus.Counter
+	msgsSent               prometheus.Counter
+	sSmtpdConnects         prometheus.Counter
+	sSmtpdDisconnects      prometheus.Counter
+	sQmgrOperations        prometheus.Counter
+	// NOTE: reminder: fast, med, slow, restrictive, etc.
+	// seems like one could use CounterVec for this
+	// aka "same Desc, but have different values for their variable labels"
+	// "collect same thing [sent mail] """pArTiTiOnEd""" by various dimensions [fast, slow, etc]"
+
+	msgsBounced       prometheus.Counter
+	msgsDeferredTries prometheus.Counter
+	msgsCleanupLines  prometheus.Counter
+
+	// NOTE: reminder: figure this out
+	individualDefers prometheus.Counter
+
+	// Original Metrics
+	// Metrics that should persist after refreshes, based on logs.
+	cleanupProcesses                prometheus.Counter
+	cleanupRejects                  prometheus.Counter
+	cleanupNotAccepted              prometheus.Counter
+	lmtpDelays                      *prometheus.HistogramVec
+	pipeDelays                      *prometheus.HistogramVec
+	qmgrInsertsNrcpt                prometheus.Histogram
+	qmgrInsertsSize                 prometheus.Histogram
+	qmgrRemoves                     prometheus.Counter
+	qmgrExpires                     prometheus.Counter
+	smtpDelays                      *prometheus.HistogramVec
+	smtpTLSConnects                 *prometheus.CounterVec
+	smtpConnectionTimedOut          prometheus.Counter
+	smtpProcesses                   *prometheus.CounterVec
+	smtpDeferreds                   prometheus.Counter
+	smtpdConnects                   prometheus.Counter
+	smtpdDisconnects                prometheus.Counter
+	smtpdFCrDNSErrors               prometheus.Counter
+	smtpdLostConnections            *prometheus.CounterVec
+	smtpdProcesses                  *prometheus.CounterVec
+	smtpdRejects                    *prometheus.CounterVec
+	smtpdSASLAuthenticationFailures prometheus.Counter
+	smtpdTLSConnects                *prometheus.CounterVec
+	unsupportedLogEntries           *prometheus.CounterVec
+	smtpStatusDeferred              prometheus.Counter
+	opendkimSignatureAdded          *prometheus.CounterVec
+	bounceNonDelivery               prometheus.Counter
+	virtualDelivered                prometheus.Counter
+}
+
 // NewPostfixExporter creates a new Postfix exporter instance.
-func NewPostfixExporter(showqPath string, logSrc LogSource, logUnsupportedLines bool) (*PostfixExporter, error) {
+func NewPostfixCollector(showqPath string, logSrc LogSource, logUnsupportedLines bool) (*PostfixCollector, error) {
 	timeBuckets := []float64{1e-3, 1e-2, 1e-1, 1.0, 10, 1 * 60, 1 * 60 * 60, 24 * 60 * 60, 2 * 24 * 60 * 60}
-	return &PostfixExporter{
-		logUnsupportedLines: logUnsupportedLines,
-		showqPath:           showqPath,
-		logSrc:              logSrc,
+	return &PostfixCollector{
+		//logUnsupportedLines: logUnsupportedLines,
+		targetShowqPath: showqPath,
+		targetLogfile:   logSrc,
+
+		msgsUnknownUnsupported: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: postfixNamespace,
+			Name:      "unknown_maillog_lines_total",
+			Help:      "Count of unknown (unmatched) maillog lines. Formerly known as 'unsupported line'. Most likely irrelevant in terms of mail sending",
+		}),
+
+		msgsAcceptedIn: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: postfixNamespace,
+			Name:      "messages_accepted_in_total",
+			Help:      "Messages accepted in via SMTPD",
+		}),
+
+		msgsNoQueue: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: postfixNamespace,
+			Name:      "messages_not_accepted_in_total",
+			Help:      "Messaged rejected by SMTPD (NO QUEUES)",
+		}),
+
+		msgsSent: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: postfixNamespace,
+			Name:      "messages_sent_smtp_total",
+			Help:      "Messages successfully sent",
+		}),
+
+		msgsBounced: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: postfixNamespace,
+			Name:      "messages_bounced_total",
+			Help:      "Messages bounced",
+		}),
+
+		msgsDeferredTries: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: postfixNamespace,
+			Name:      "deferred_messages_attempts_total",
+			Help:      "Total number of message send attempts for messages in deferred status",
+		}),
+
+		msgsCleanupLines: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: postfixNamespace,
+			Name:      "message_cleanup_lines_total",
+			Help:      "Number of cleanup lines (expected: two lines for every message)",
+		}),
+
+		sSmtpdConnects: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: postfixNamespace,
+			Name:      "smtpd_connections_total",
+			Help:      "Number of SMTPD connections (reminder that each connection may include more than one message)",
+		}),
+
+		sSmtpdDisconnects: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: postfixNamespace,
+			Name:      "smtpd_disconnects_total",
+			Help:      "Number of SMTPD disconnects (reminder that this is virtually irrelevant)",
+		}),
+
+		sQmgrOperations: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: postfixNamespace,
+			Name:      "qmgr_operations_total",
+			Help:      "Queue manager operations total",
+		}),
 
 		cleanupProcesses: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: "postfix",
@@ -484,6 +583,7 @@ func NewPostfixExporter(showqPath string, logSrc LogSource, logUnsupportedLines 
 			Help:      "Total number of messages not accepted by cleanup.",
 		}),
 		lmtpDelays: prometheus.NewHistogramVec(
+			// we don't use lmtp
 			prometheus.HistogramOpts{
 				Namespace: "postfix",
 				Name:      "lmtp_delivery_delay_seconds",
@@ -617,30 +717,47 @@ func NewPostfixExporter(showqPath string, logSrc LogSource, logUnsupportedLines 
 			prometheus.CounterOpts{
 				Namespace: "opendkim",
 				Name:      "signatures_added_total",
-				Help:      "Total number of messages signed.",
+				Help:      "Total number of messages signed. (all messages should be signed)",
 			},
 			[]string{"subject", "domain"},
 		),
 		bounceNonDelivery: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: "postfix",
 			Name:      "bounce_non_delivery_notification_total",
-			Help:      "Total number of non delivery notification sent by bounce.",
+			Help:      "Total number of non-delivery notifications sent by bounce.",
 		}),
 		virtualDelivered: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: "postfix",
 			Name:      "virtual_delivered_total",
-			Help:      "Total number of mail delivered to a virtual mailbox.",
+			Help:      "Total number of mail delivered to a virtual mailbox. (expected: zero)",
 		}),
 	}, nil
 }
 
 // Describe the Prometheus metrics that are going to be exported.
-func (e *PostfixExporter) Describe(ch chan<- *prometheus.Desc) {
+func (e *PostfixCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- postfixUpDesc
 
-	if e.logSrc == nil {
+	if e.targetLogfile == nil {
 		return
 	}
+	// 'Describe' is a method of 'Collector' interface that takes a pointer value type channel
+	// 'Desc' is a method of 'Metric' interface that returns pointer value '*Desc'
+
+	// added:
+	ch <- e.msgsUnknownUnsupported.Desc()
+	ch <- e.msgsAcceptedIn.Desc()
+	ch <- e.msgsNoQueue.Desc()
+	ch <- e.msgsSent.Desc()
+	ch <- e.sSmtpdConnects.Desc()
+	ch <- e.sSmtpdDisconnects.Desc()
+	ch <- e.sQmgrOperations.Desc()
+	ch <- e.msgsBounced.Desc()
+	ch <- e.msgsDeferredTries.Desc()
+	ch <- e.msgsCleanupLines.Desc()
+	ch <- e.individualDefers.Desc()
+
+	// previous:
 	ch <- e.cleanupProcesses.Desc()
 	ch <- e.cleanupRejects.Desc()
 	ch <- e.cleanupNotAccepted.Desc()
@@ -670,8 +787,9 @@ func (e *PostfixExporter) Describe(ch chan<- *prometheus.Desc) {
 	ch <- e.virtualDelivered.Desc()
 }
 
-func (e *PostfixExporter) StartMetricCollection(ctx context.Context) {
-	if e.logSrc == nil {
+func (e *PostfixCollector) StartMetricCollection(ctx context.Context) {
+
+	if e.targetLogfile == nil {
 		return
 	}
 
@@ -683,11 +801,11 @@ func (e *PostfixExporter) StartMetricCollection(ctx context.Context) {
 			Help:      "Whether scraping Postfix's metrics was successful.",
 		},
 		[]string{"path"})
-	gauge := gaugeVec.WithLabelValues(e.logSrc.Path())
+	gauge := gaugeVec.WithLabelValues(e.targetLogfile.Path())
 	defer gauge.Set(0)
 
 	for {
-		line, err := e.logSrc.Read(ctx)
+		line, err := e.targetLogfile.Read(ctx)
 		if err != nil {
 			if err != io.EOF {
 				log.Printf("Couldn't read journal: %v", err)
@@ -700,26 +818,42 @@ func (e *PostfixExporter) StartMetricCollection(ctx context.Context) {
 }
 
 // Collect metrics from Postfix's showq socket and its log file.
-func (e *PostfixExporter) Collect(ch chan<- prometheus.Metric) {
-	err := CollectShowqFromSocket(e.showqPath, ch)
+func (e *PostfixCollector) Collect(ch chan<- prometheus.Metric) {
+	// the bread and butter, the sweet nectar jelly mumbo jumbo stew that be a-cookin in the kitchen
+
+	err := CollectShowqFromSocket(e.targetShowqPath, ch)
 	if err == nil {
 		ch <- prometheus.MustNewConstMetric(
 			postfixUpDesc,
 			prometheus.GaugeValue,
 			1.0,
-			e.showqPath)
+			e.targetShowqPath)
 	} else {
 		log.Printf("Failed to scrape showq socket: %s", err)
 		ch <- prometheus.MustNewConstMetric(
 			postfixUpDesc,
 			prometheus.GaugeValue,
 			0.0,
-			e.showqPath)
+			e.targetShowqPath)
 	}
 
-	if e.logSrc == nil {
+	if e.targetLogfile == nil {
 		return
 	}
+	// added:
+	ch <- e.msgsUnknownUnsupported
+	ch <- e.msgsAcceptedIn
+	ch <- e.msgsNoQueue
+	ch <- e.msgsSent
+	ch <- e.sSmtpdConnects
+	ch <- e.sSmtpdDisconnects
+	ch <- e.sQmgrOperations
+	ch <- e.msgsBounced
+	ch <- e.msgsDeferredTries
+	ch <- e.msgsCleanupLines
+	ch <- e.individualDefers
+
+	// previous:
 	ch <- e.cleanupProcesses
 	ch <- e.cleanupRejects
 	ch <- e.cleanupNotAccepted

@@ -13,14 +13,15 @@ import (
 
 var (
 	ctx = context.Background()
-	// NOTE: flags could be adjusted for better 'drop-in' replacement
-	targetLogfile = flag.String("logfile", "/var/log/maillog", "Full path to mail log file for parsing")
+	// NOTE: intending to retain flags for better drop-in
+	// though also adjusting to hyphens for consistency
+	targetLogfile = flag.String("postfix.logfile-path", "/var/log/maillog", "Full path to mail log file for parsing")
 
 	targetDebug = flag.Bool("debug", false, "Enable printing of arbitrary debug messages to stdout for troubleshooting purposes")
 	//targetLogSnooze = flag.String("sleep-time", "5", "Seconds to sleep after hitting EOF on mail log file")
-	targetListenAddr  = flag.String("listen-address", ":9003", "Address on which to listen for scraping")
-	targetMetricsPath = flag.String("metrics-path", "/metrics", "Path on which to expose metrics")
-	targetShowqPath   = flag.String("showq-path", "/var/spool/postfix/public/showq", "Path to Postfix showq socket")
+	targetListenAddr  = flag.String("web.listen-address", ":9003", "Address on which to listen for scraping")
+	targetMetricsPath = flag.String("web.telemetry-path", "/metrics", "Path on which to expose metrics")
+	targetShowqPath   = flag.String("postfix.showq-path", "/var/spool/postfix/public/showq", "Path to Postfix showq socket")
 )
 
 func init() {
@@ -33,11 +34,11 @@ func init() {
 func main() {
 	infoLine("Printing of extra info lines is enabled")
 
-	//logSrc, err := NewLogSourceFromFactories(ctx)
-	//if err != nil {
-	//	log.Fatalf("Error opening log source: %s", err)
-	//}
-	//defer logSrc.Close()
+	maillogFile, err := NewFileLogSource(ctx, *targetLogfile)
+	if err != nil {
+		log.Fatalf("Error opening log source: %s", err)
+	}
+	defer maillogFile.Close()
 
 	exporter, err := NewPostfixExporter(
 		*targetShowqPath,
@@ -47,6 +48,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create PostfixExporter: %s", err)
 	}
+
 	prometheus.MustRegister(exporter)
 
 	http.Handle(*targetMetricsPath, promhttp.Handler())
@@ -63,6 +65,7 @@ func main() {
 			log.Fatalln("Error in HTTP Handler func! ->: ", err)
 		}
 	})
+
 	ctx, cancelFunc := context.WithCancel(ctx)
 	infoLine("Initialize context")
 	defer cancelFunc()

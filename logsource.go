@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 
+	// IS THIS FILE NEEDED IF WE ARE ONLY GOING TO HANDLE LOG FILE? NOTE
+
 	"github.com/alecthomas/kingpin"
 )
 

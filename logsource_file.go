@@ -3,9 +3,7 @@ package main
 import (
 	"context"
 	"io"
-	"log"
 
-	"github.com/alecthomas/kingpin"
 	"github.com/nxadm/tail"
 )
 
@@ -15,7 +13,7 @@ type FileLogSource struct {
 }
 
 // NewFileLogSource creates a new log source, tailing the given file.
-func NewFileLogSource(path string) (*FileLogSource, error) {
+func NewFileLogSource(ctx context.Context, path string) (*FileLogSource, error) {
 	tailer, err := tail.TailFile(path, tail.Config{
 		ReOpen:    true,                               // reopen the file if it's rotated
 		MustExist: true,                               // fail immediately if the file is missing or has incorrect permissions
@@ -56,23 +54,12 @@ func (s *FileLogSource) Read(ctx context.Context) (string, error) {
 	}
 }
 
-// A fileLogSourceFactory is a factory than can create log sources
-// from command line flags.
-//
-// Because this factory is enabled by default, it must always be
-// registered last.
-type fileLogSourceFactory struct {
-	path string
-}
+// A LogSource is an interface to read log lines.
+type LogSource interface {
+	// Path returns a representation of the log location.
+	Path() string
 
-func (f *fileLogSourceFactory) Init(app *kingpin.Application) {
-	app.Flag("postfix.logfile_path", "Path where Postfix writes log entries.").Default("/var/log/mail.log").StringVar(&f.path)
-}
-
-func (f *fileLogSourceFactory) New(ctx context.Context) (LogSourceCloser, error) {
-	if f.path == "" {
-		return nil, nil
-	}
-	log.Printf("Reading log events from %s", f.path)
-	return NewFileLogSource(f.path)
+	// Read returns the next log line. Returns `io.EOF` at the end of
+	// the log.
+	Read(context.Context) (string, error)
 }
