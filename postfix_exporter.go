@@ -60,7 +60,12 @@ var (
 		[]string{"path"}, nil)
 
 	// Added parsing patterns.
-	msgLineMatch   = regexp.MustCompile(`(postfix(-slow|-fast|-medium|-restrictive)?\/(smtpd?|scache|cleanup|qmgr|bounce|error|warning|fatal|panic))`)
+	msgLineMatch = regexp.MustCompile(`(postfix(-slow|-fast|-medium|-restrictive)?\/(smtpd?|scache|cleanup|qmgr|bounce|error|warning|fatal|panic))`)
+	// NOTE: opendkim reminder
+	// groupings of interest:
+	// group[0] is eg "postfix/qmgr", "postfix-slow/smtp"
+	// group[3] is "qmgr" || "smtp" || etc
+	//
 	msgIDMatch     = regexp.MustCompile(`\s([A-F0-9]{6,}):`)
 	emailAddrMatch = regexp.MustCompile(`<(.*?@?.*?)>:`)
 
@@ -290,12 +295,19 @@ func CollectShowqFromSocket(path string, ch chan<- prometheus.Metric) error {
 func (e *PostfixCollector) CollectFromLogLine(line string) {
 	// the bread and butter babe, the sweet nectar jelly mumbo jumbo stew that be a-cookin in the kitchen
 
-	// Strip off timestamp, hostname, etc. // ? ... why
-	logMatches := logLine.FindStringSubmatch(line)
+	// Strip off timestamp, hostname, etc.
+	// odd way to describe this-- a better way might be:
+	// 'this is how log lines are filtered for relevancy, and
+	// organized into groups in order to count/parse/extract data.'
+	// logMatches := logLine.FindStringSubmatch(line)
+	logMatches := msgLineMatch.FindStringSubmatch(line)
 
 	if logMatches == nil {
-		// Unknown log entry format.
-		// Unknown if relevant
+		// These are being counted as unsupported, but it is definitely expected
+		// to have a fair amout; not all lines include relevant or notable information.
+		// An example might be info regarding an untrusted SMTP connection-- SMTP servers
+		// may use certificates that are not publicly available, but that's still the domain,
+		// the mail still goes there, doesn't really matter that it's 'untrusted'.
 		e.msgsUnknownUnsupported.Inc()
 		return
 	}
