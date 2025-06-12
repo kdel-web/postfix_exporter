@@ -15,18 +15,18 @@ var (
 	ctx = context.Background()
 	// NOTE: intending to retain flags for better drop-in
 	// though also adjusting to hyphens for consistency
-	targetLogfile = flag.String("postfix.logfile-path", "/var/log/maillog", "Full path to mail log file for parsing")
+	cmdLogfile = flag.String("postfix.logfile-path", "/var/log/maillog", "Full path to mail log file for parsing")
 
-	targetDebug = flag.Bool("debug", false, "Enable printing of arbitrary debug messages to stdout for troubleshooting purposes")
+	cmdDebug = flag.Bool("debug", false, "Enable printing of arbitrary debug messages to stdout for troubleshooting purposes")
 	//targetLogSnooze = flag.String("sleep-time", "5", "Seconds to sleep after hitting EOF on mail log file")
-	targetListenAddr  = flag.String("web.listen-address", ":9003", "Address on which to listen for scraping")
-	targetMetricsPath = flag.String("web.telemetry-path", "/metrics", "Path on which to expose metrics")
-	targetShowqPath   = flag.String("postfix.showq-path", "/var/spool/postfix/public/showq", "Path to Postfix showq socket")
+	cmdListenAddr  = flag.String("web.listen-address", ":9003", "Address on which to listen for scraping")
+	cmdMetricsPath = flag.String("web.telemetry-path", "/metrics", "Path on which to expose metrics")
+	cmdShowqPath   = flag.String("postfix.showq-path", "/var/spool/postfix/public/showq", "Path to Postfix showq socket")
 )
 
 func init() {
 	flag.Parse()
-	if *targetLogfile == "" || *targetListenAddr == "" || *targetMetricsPath == "" || *targetShowqPath == "" {
+	if *cmdLogfile == "" || *cmdListenAddr == "" || *cmdMetricsPath == "" || *cmdShowqPath == "" {
 		log.Fatalln("Expected parameters were not provided. Quitting")
 	}
 }
@@ -34,16 +34,16 @@ func init() {
 func main() {
 	infoLine("Printing of extra info lines is enabled")
 
-	maillogFile, err := NewFileLogSource(ctx, *targetLogfile)
+	maillogFile, err := NewFileLogSource(ctx, *cmdLogfile)
 	if err != nil {
 		log.Fatalf("Error opening log source: %s", err)
 	}
 	defer maillogFile.Close()
 
-	exporter, err := NewPostfixExporter(
-		*targetShowqPath,
-		*targetLogfile,
-		//*logUnsupportedLines,
+	exporter, err := NewPostfixCollector(
+		*cmdShowqPath,
+		maillogFile,
+		true,
 	)
 	if err != nil {
 		log.Fatalf("Failed to create PostfixExporter: %s", err)
@@ -51,14 +51,14 @@ func main() {
 
 	prometheus.MustRegister(exporter)
 
-	http.Handle(*targetMetricsPath, promhttp.Handler())
+	http.Handle(*cmdMetricsPath, promhttp.Handler())
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		_, err = w.Write([]byte(`
 			<html>
 			<head><title>Postfix Exporter</title></head>
 			<body>
 			<h1>WSS SE Postfix Exporter</h1>
-			<p><a href='` + *targetMetricsPath + `'>Metrics</a></p>
+			<p><a href='` + *cmdMetricsPath + `'>Metrics</a></p>
 			</body>
 			</html>`))
 		if err != nil {
@@ -73,12 +73,12 @@ func main() {
 	go exporter.StartMetricCollection(ctx)
 	infoLine("Started goroutine for metric collection")
 
-	log.Print("Listening on ", *targetListenAddr)
-	log.Fatal(http.ListenAndServe(*targetListenAddr, nil))
+	log.Print("Listening on ", *cmdListenAddr)
+	log.Fatal(http.ListenAndServe(*cmdListenAddr, nil))
 }
 
 func infoLine(a ...any) {
-	if *targetDebug == true {
+	if *cmdDebug == true {
 		log.Println("Debug Line ->: ")
 	}
 }
