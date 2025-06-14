@@ -366,127 +366,129 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 		e.msgsUnknownUnsupported.Inc()
 		return
 	}
-	process := logMatches[1]
-	// level := logMatches[5] // was only used for collecting unknown loglines. changed to counter
-	/*
-		ORIGINAL REGEX NOTES
-		- group 1 will only ever be "postfix" or "opendkim" (then there is the default case at bottom obvs)
-		- group 2 is "/smtp" || "/discard" || "/qmgr" || "/scache" || "smtpd" etc
-		- group 3 is the same as above except without the leading slash
-		- group 4 is literally the remaining portion of the logline, starting right after the "postfix/$daemonName[###]: $HERE ..."
+	if len(logMatches) > 1 {
+		process := logMatches[1]
+		// level := logMatches[5] // was only used for collecting unknown loglines. changed to counter
+		/*
+			ORIGINAL REGEX NOTES
+			- group 1 will only ever be "postfix" or "opendkim" (then there is the default case at bottom obvs)
+			- group 2 is "/smtp" || "/discard" || "/qmgr" || "/scache" || "smtpd" etc
+			- group 3 is the same as above except without the leading slash
+			- group 4 is literally the remaining portion of the logline, starting right after the "postfix/$daemonName[###]: $HERE ..."
 
-	*/
-	remainder := logMatches[4]
-	switch process {
-	case "postfix":
-		// Group patterns to check by Postfix service.
-		subprocess := logMatches[3]
-		switch subprocess {
-		case "cleanup":
-			if strings.Contains(remainder, ": message-id=<") {
-				e.cleanupProcesses.Inc()
-			} else if strings.Contains(remainder, ": reject: ") {
-				e.cleanupRejects.Inc()
-			} else {
-				e.msgsUnknownUnsupported.Inc()
-			}
-		// this could likely be completely removed and nothing would change
-		case "lmtp":
-			if lmtpMatches := lmtpPipeSMTPLine.FindStringSubmatch(remainder); lmtpMatches != nil {
-				addToHistogramVec(e.lmtpDelays, lmtpMatches[2], "LMTP pdelay", "before_queue_manager")
-				addToHistogramVec(e.lmtpDelays, lmtpMatches[3], "LMTP adelay", "queue_manager")
-				addToHistogramVec(e.lmtpDelays, lmtpMatches[4], "LMTP sdelay", "connection_setup")
-				addToHistogramVec(e.lmtpDelays, lmtpMatches[5], "LMTP xdelay", "transmission")
-			} else {
-				e.msgsUnknownUnsupported.Inc()
-			}
-		// also could likely be removed
-		case "pipe":
-			if pipeMatches := lmtpPipeSMTPLine.FindStringSubmatch(remainder); pipeMatches != nil {
-				addToHistogramVec(e.pipeDelays, pipeMatches[2], "PIPE pdelay", pipeMatches[1], "before_queue_manager")
-				addToHistogramVec(e.pipeDelays, pipeMatches[3], "PIPE adelay", pipeMatches[1], "queue_manager")
-				addToHistogramVec(e.pipeDelays, pipeMatches[4], "PIPE sdelay", pipeMatches[1], "connection_setup")
-				addToHistogramVec(e.pipeDelays, pipeMatches[5], "PIPE xdelay", pipeMatches[1], "transmission")
-			} else {
-				e.msgsUnknownUnsupported.Inc()
-			}
-		// technically could potentially be relevant to operation, though not to mail deliverability
-		case "qmgr":
-			if qmgrInsertMatches := qmgrInsertLine.FindStringSubmatch(remainder); qmgrInsertMatches != nil {
-				addToHistogram(e.qmgrInsertsSize, qmgrInsertMatches[1], "QMGR size")
-				addToHistogram(e.qmgrInsertsNrcpt, qmgrInsertMatches[2], "QMGR nrcpt")
-			} else if strings.HasSuffix(remainder, ": removed") {
-				e.qmgrRemoves.Inc()
-			} else if qmgrExpired := qmgrExpiredLine.FindStringSubmatch(remainder); qmgrExpired != nil {
-				e.qmgrExpires.Inc()
-			} else {
-				e.msgsUnknownUnsupported.Inc()
-			}
-		case "smtp":
-			if smtpMatches := lmtpPipeSMTPLine.FindStringSubmatch(remainder); smtpMatches != nil {
-				addToHistogramVec(e.smtpDelays, smtpMatches[2], "before_queue_manager", "")
-				addToHistogramVec(e.smtpDelays, smtpMatches[3], "queue_manager", "")
-				addToHistogramVec(e.smtpDelays, smtpMatches[4], "connection_setup", "")
-				addToHistogramVec(e.smtpDelays, smtpMatches[5], "transmission", "")
-				if smtpStatusMatches := smtpStatusLine.FindStringSubmatch(remainder); smtpStatusMatches != nil {
-					e.smtpProcesses.WithLabelValues(smtpStatusMatches[1]).Inc()
-					if smtpStatusMatches[1] == "deferred" {
-						e.smtpStatusDeferred.Inc()
-					}
+		*/
+		remainder := logMatches[4]
+		switch process {
+		case "postfix":
+			// Group patterns to check by Postfix service.
+			subprocess := logMatches[3]
+			switch subprocess {
+			case "cleanup":
+				if strings.Contains(remainder, ": message-id=<") {
+					e.cleanupProcesses.Inc()
+				} else if strings.Contains(remainder, ": reject: ") {
+					e.cleanupRejects.Inc()
+				} else {
+					e.msgsUnknownUnsupported.Inc()
 				}
-			} else if smtpTLSMatches := smtpTLSLine.FindStringSubmatch(remainder); smtpTLSMatches != nil {
-				e.smtpTLSConnects.WithLabelValues(smtpTLSMatches[1:]...).Inc()
-			} else if smtpMatches := smtpConnectionTimedOut.FindStringSubmatch(remainder); smtpMatches != nil {
-				e.smtpConnectionTimedOut.Inc()
-			} else {
+			// this could likely be completely removed and nothing would change
+			case "lmtp":
+				if lmtpMatches := lmtpPipeSMTPLine.FindStringSubmatch(remainder); lmtpMatches != nil {
+					addToHistogramVec(e.lmtpDelays, lmtpMatches[2], "LMTP pdelay", "before_queue_manager")
+					addToHistogramVec(e.lmtpDelays, lmtpMatches[3], "LMTP adelay", "queue_manager")
+					addToHistogramVec(e.lmtpDelays, lmtpMatches[4], "LMTP sdelay", "connection_setup")
+					addToHistogramVec(e.lmtpDelays, lmtpMatches[5], "LMTP xdelay", "transmission")
+				} else {
+					e.msgsUnknownUnsupported.Inc()
+				}
+			// also could likely be removed
+			case "pipe":
+				if pipeMatches := lmtpPipeSMTPLine.FindStringSubmatch(remainder); pipeMatches != nil {
+					addToHistogramVec(e.pipeDelays, pipeMatches[2], "PIPE pdelay", pipeMatches[1], "before_queue_manager")
+					addToHistogramVec(e.pipeDelays, pipeMatches[3], "PIPE adelay", pipeMatches[1], "queue_manager")
+					addToHistogramVec(e.pipeDelays, pipeMatches[4], "PIPE sdelay", pipeMatches[1], "connection_setup")
+					addToHistogramVec(e.pipeDelays, pipeMatches[5], "PIPE xdelay", pipeMatches[1], "transmission")
+				} else {
+					e.msgsUnknownUnsupported.Inc()
+				}
+			// technically could potentially be relevant to operation, though not to mail deliverability
+			case "qmgr":
+				if qmgrInsertMatches := qmgrInsertLine.FindStringSubmatch(remainder); qmgrInsertMatches != nil {
+					addToHistogram(e.qmgrInsertsSize, qmgrInsertMatches[1], "QMGR size")
+					addToHistogram(e.qmgrInsertsNrcpt, qmgrInsertMatches[2], "QMGR nrcpt")
+				} else if strings.HasSuffix(remainder, ": removed") {
+					e.qmgrRemoves.Inc()
+				} else if qmgrExpired := qmgrExpiredLine.FindStringSubmatch(remainder); qmgrExpired != nil {
+					e.qmgrExpires.Inc()
+				} else {
+					e.msgsUnknownUnsupported.Inc()
+				}
+			case "smtp":
+				if smtpMatches := lmtpPipeSMTPLine.FindStringSubmatch(remainder); smtpMatches != nil {
+					addToHistogramVec(e.smtpDelays, smtpMatches[2], "before_queue_manager", "")
+					addToHistogramVec(e.smtpDelays, smtpMatches[3], "queue_manager", "")
+					addToHistogramVec(e.smtpDelays, smtpMatches[4], "connection_setup", "")
+					addToHistogramVec(e.smtpDelays, smtpMatches[5], "transmission", "")
+					if smtpStatusMatches := smtpStatusLine.FindStringSubmatch(remainder); smtpStatusMatches != nil {
+						e.smtpProcesses.WithLabelValues(smtpStatusMatches[1]).Inc()
+						if smtpStatusMatches[1] == "deferred" {
+							e.smtpStatusDeferred.Inc()
+						}
+					}
+				} else if smtpTLSMatches := smtpTLSLine.FindStringSubmatch(remainder); smtpTLSMatches != nil {
+					e.smtpTLSConnects.WithLabelValues(smtpTLSMatches[1:]...).Inc()
+				} else if smtpMatches := smtpConnectionTimedOut.FindStringSubmatch(remainder); smtpMatches != nil {
+					e.smtpConnectionTimedOut.Inc()
+				} else {
+					e.msgsUnknownUnsupported.Inc()
+				}
+			case "smtpd":
+				if strings.HasPrefix(remainder, "connect from ") {
+					e.smtpdConnects.Inc()
+				} else if strings.HasPrefix(remainder, "disconnect from ") {
+					e.smtpdDisconnects.Inc()
+				} else if smtpdFCrDNSErrorsLine.MatchString(remainder) {
+					e.smtpdFCrDNSErrors.Inc()
+				} else if smtpdLostConnectionMatches := smtpdLostConnectionLine.FindStringSubmatch(remainder); smtpdLostConnectionMatches != nil {
+					e.smtpdLostConnections.WithLabelValues(smtpdLostConnectionMatches[1]).Inc()
+				} else if smtpdProcessesSASLMatches := smtpdProcessesSASLLine.FindStringSubmatch(remainder); smtpdProcessesSASLMatches != nil {
+					e.smtpdProcesses.WithLabelValues(smtpdProcessesSASLMatches[1]).Inc()
+				} else if strings.Contains(remainder, ": client=") {
+					e.smtpdProcesses.WithLabelValues("").Inc()
+				} else if smtpdRejectsMatches := smtpdRejectsLine.FindStringSubmatch(remainder); smtpdRejectsMatches != nil {
+					e.smtpdRejects.WithLabelValues(smtpdRejectsMatches[1]).Inc()
+				} else if smtpdSASLAuthenticationFailuresLine.MatchString(remainder) {
+					e.smtpdSASLAuthenticationFailures.Inc()
+				} else if smtpdTLSMatches := smtpdTLSLine.FindStringSubmatch(remainder); smtpdTLSMatches != nil {
+					e.smtpdTLSConnects.WithLabelValues(smtpdTLSMatches[1:]...).Inc()
+				} else {
+					e.msgsUnknownUnsupported.Inc()
+				}
+			case "bounce":
+				if bounceMatches := bounceNonDeliveryLine.FindStringSubmatch(remainder); bounceMatches != nil {
+					e.bounceNonDelivery.Inc()
+				} else {
+					e.msgsUnknownUnsupported.Inc()
+				}
+			case "virtual":
+				if strings.HasSuffix(remainder, ", status=sent (delivered to maildir)") {
+					e.virtualDelivered.Inc()
+				} else {
+					e.msgsUnknownUnsupported.Inc()
+				}
+			default:
 				e.msgsUnknownUnsupported.Inc()
 			}
-		case "smtpd":
-			if strings.HasPrefix(remainder, "connect from ") {
-				e.smtpdConnects.Inc()
-			} else if strings.HasPrefix(remainder, "disconnect from ") {
-				e.smtpdDisconnects.Inc()
-			} else if smtpdFCrDNSErrorsLine.MatchString(remainder) {
-				e.smtpdFCrDNSErrors.Inc()
-			} else if smtpdLostConnectionMatches := smtpdLostConnectionLine.FindStringSubmatch(remainder); smtpdLostConnectionMatches != nil {
-				e.smtpdLostConnections.WithLabelValues(smtpdLostConnectionMatches[1]).Inc()
-			} else if smtpdProcessesSASLMatches := smtpdProcessesSASLLine.FindStringSubmatch(remainder); smtpdProcessesSASLMatches != nil {
-				e.smtpdProcesses.WithLabelValues(smtpdProcessesSASLMatches[1]).Inc()
-			} else if strings.Contains(remainder, ": client=") {
-				e.smtpdProcesses.WithLabelValues("").Inc()
-			} else if smtpdRejectsMatches := smtpdRejectsLine.FindStringSubmatch(remainder); smtpdRejectsMatches != nil {
-				e.smtpdRejects.WithLabelValues(smtpdRejectsMatches[1]).Inc()
-			} else if smtpdSASLAuthenticationFailuresLine.MatchString(remainder) {
-				e.smtpdSASLAuthenticationFailures.Inc()
-			} else if smtpdTLSMatches := smtpdTLSLine.FindStringSubmatch(remainder); smtpdTLSMatches != nil {
-				e.smtpdTLSConnects.WithLabelValues(smtpdTLSMatches[1:]...).Inc()
-			} else {
-				e.msgsUnknownUnsupported.Inc()
-			}
-		case "bounce":
-			if bounceMatches := bounceNonDeliveryLine.FindStringSubmatch(remainder); bounceMatches != nil {
-				e.bounceNonDelivery.Inc()
-			} else {
-				e.msgsUnknownUnsupported.Inc()
-			}
-		case "virtual":
-			if strings.HasSuffix(remainder, ", status=sent (delivered to maildir)") {
-				e.virtualDelivered.Inc()
+		case "opendkim":
+			if opendkimMatches := opendkimSignatureAdded.FindStringSubmatch(remainder); opendkimMatches != nil {
+				e.opendkimSignatureAdded.WithLabelValues(opendkimMatches[1], opendkimMatches[2]).Inc()
 			} else {
 				e.msgsUnknownUnsupported.Inc()
 			}
 		default:
+			// Unknown log entry format.
 			e.msgsUnknownUnsupported.Inc()
 		}
-	case "opendkim":
-		if opendkimMatches := opendkimSignatureAdded.FindStringSubmatch(remainder); opendkimMatches != nil {
-			e.opendkimSignatureAdded.WithLabelValues(opendkimMatches[1], opendkimMatches[2]).Inc()
-		} else {
-			e.msgsUnknownUnsupported.Inc()
-		}
-	default:
-		// Unknown log entry format.
-		e.msgsUnknownUnsupported.Inc()
 	}
 }
 

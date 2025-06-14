@@ -79,6 +79,6 @@ func main() {
 
 func infoLine(a ...any) {
 	if *cmdDebug == true {
-		log.Println("Debug Line ->: ")
+		log.Println("Debug Line ->: ", a)
 	}
 }
