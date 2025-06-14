@@ -9,6 +9,10 @@
 postfix_exporter
 builds/*
 
+# example log files for testing
+outputs/*
+outputs
+
 
 *.iml
 vendor/

@@ -44,13 +44,15 @@ const (
 	postfixNamespace = "Postfix"
 	postSmtpd        = "postfix/smtpd"
 	postNoQueue      = "NOQUEUE"
-	postFast         = "postfix-fast/smtp"
-	postSlow         = "postfix-slow/smtp"
-	postMed          = "postfix-medium/smtp"
-	postRes          = "postfix-restrictive/smtp"
-	postSent         = "status=sent"
-	postDefer        = "status=deferred"
-	postBounce       = "status=bounced"
+	//postSmtp = "postfix/smtp"
+	postFast   = "postfix-fast/smtp"
+	postSlow   = "postfix-slow/smtp"
+	postMed    = "postfix-medium/smtp"
+	postRes    = "postfix-restrictive/smtp"
+	postSent   = "status=sent"
+	postDefer  = "status=deferred"
+	postBounce = "status=bounced"
+	postClean  = "postfix/cleanup"
 )
 
 var (
@@ -60,12 +62,15 @@ var (
 		[]string{"path"}, nil)
 
 	// Added parsing patterns.
-	msgLineMatch = regexp.MustCompile(`(postfix(-slow|-fast|-medium|-restrictive)?\/(smtpd?|scache|cleanup|qmgr|bounce|error|warning|fatal|panic))`)
-	// NOTE: opendkim reminder
-	// groupings of interest:
-	// group[0] is eg "postfix/qmgr", "postfix-slow/smtp"
-	// group[3] is "qmgr" || "smtp" || etc
-	//
+	//msgLineMatch = regexp.MustCompile(`(postfix(-slow|-fast|-medium|-restrictive)?\/(smtpd?|scache|cleanup|qmgr|bounce|error|warning|fatal|panic|discard))`)
+	//newMsgLineMatch = regexp.MustCompile(`opendkim|(postfix)(-slow|-fast|-medium|-restrictive)?\/(smtpd?|scache|cleanup|qmgr|bounce|error|warning|fatal|panic|discard)?`)
+	// even though there are additional subgroups defined, most likely will only use either the full match [0] or first match [1]
+	// and then handle further processing from there.
+	// ackshually, here is a non-capturing group version:
+	// there will only be two groups; first group
+	newMsgLineMatch = regexp.MustCompile(`(opendkim|postfix(?:-slow)?(?:-fast)?(?:-medium)?(?:-restrictive)?\/(?:smtpd?|scache|cleanup|qmgr|bounce|error|warning|fatal|panic|discard)?)`)
+	msgDelaysMatch  = regexp.MustCompile(`delays=([0-9.?\/]+)\,`)
+
 	msgIDMatch     = regexp.MustCompile(`\s([A-F0-9]{6,}):`)
 	emailAddrMatch = regexp.MustCompile(`<(.*?@?.*?)>:`)
 
@@ -300,19 +305,77 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 	// 'this is how log lines are filtered for relevancy, and
 	// organized into groups in order to count/parse/extract data.'
 	// logMatches := logLine.FindStringSubmatch(line)
-	logMatches := msgLineMatch.FindStringSubmatch(line)
+	newLogMatches := newMsgLineMatch.FindStringSubmatch(line)
+	logMatches := logLine.FindStringSubmatch(line)
+	// currently there is technically one capturing group, but the regexp.FindStringSubmatch has len 2, because 0 is the full match
+	// for our purposes, 0 and 1 should be the same
 
 	if logMatches == nil {
-		// These are being counted as unsupported, but it is definitely expected
-		// to have a fair amout; not all lines include relevant or notable information.
+		if newLogMatches != nil {
+			newProcess := newLogMatches[1]
+			switch newProcess {
+			case postSmtpd:
+				if strings.Contains(line, postNoQueue) {
+					e.msgsNoQueue.Inc()
+				} else if strings.Contains(line, "disconnect") {
+					e.sSmtpdDisconnects.Inc()
+				} else if strings.Contains(line, "connect") {
+					e.sSmtpdConnects.Inc()
+				} // there will be other lines but they are not relevant
+
+			case postFast, postSlow, postMed, postRes:
+				if lineDelays := msgDelaysMatch.FindStringSubmatch(line); lineDelays != nil {
+					findDelays := strings.Split(line, "/")
+					if strings.Contains(line, postSent) {
+						e.msgsSent.Inc()
+						// if problems with last value in these functions, remove the last value; set as "" instead of "sent_msgs"
+						// they're supposed to be "labels" in prometheus speak
+						// and I'm not sure about them
+						addToHistogramVec(e.smtpDelays, findDelays[2], "before_queue_manager", "sent_msgs")
+						addToHistogramVec(e.smtpDelays, findDelays[3], "queue_manager", "sent_msgs")
+						addToHistogramVec(e.smtpDelays, findDelays[4], "connection_setup", "sent_msgs")
+						addToHistogramVec(e.smtpDelays, findDelays[5], "transmission", "sent_msgs")
+					} else if strings.Contains(line, postDefer) {
+						e.msgsDeferredTries.Inc()
+						addToHistogramVec(e.smtpDelays, findDelays[2], "before_queue_manager", "deferred_msgs")
+						addToHistogramVec(e.smtpDelays, findDelays[3], "queue_manager", "deferred_msgs")
+						addToHistogramVec(e.smtpDelays, findDelays[4], "connection_setup", "deferred_msgs")
+						addToHistogramVec(e.smtpDelays, findDelays[5], "transmission", "deferred_msgs")
+					} else if strings.Contains(line, postBounce) {
+						e.msgsBounced.Inc()
+						addToHistogramVec(e.smtpDelays, findDelays[2], "before_queue_manager", "bounced_msgs")
+						addToHistogramVec(e.smtpDelays, findDelays[3], "queue_manager", "bounced_msgs")
+						addToHistogramVec(e.smtpDelays, findDelays[4], "connection_setup", "bounced_msgs")
+						addToHistogramVec(e.smtpDelays, findDelays[5], "transmission", "bounced_msgs")
+					}
+				}
+			case postClean:
+				e.msgsCleanupLines.Inc()
+			}
+		}
+
+		// These are being counted as "Unknown" / "Unsupported", but it is expected
+		// that this number is not zero, as not all lines include relevant or notable information.
 		// An example might be info regarding an untrusted SMTP connection-- SMTP servers
 		// may use certificates that are not publicly available, but that's still the domain,
 		// the mail still goes there, doesn't really matter that it's 'untrusted'.
+		// **If this number is high, (or if any additional smtp rules based on sender/recipient are added),
+		// this may require additional review.
+		//
+	} else {
 		e.msgsUnknownUnsupported.Inc()
 		return
 	}
 	process := logMatches[1]
 	// level := logMatches[5] // was only used for collecting unknown loglines. changed to counter
+	/*
+		ORIGINAL REGEX NOTES
+		- group 1 will only ever be "postfix" or "opendkim" (then there is the default case at bottom obvs)
+		- group 2 is "/smtp" || "/discard" || "/qmgr" || "/scache" || "smtpd" etc
+		- group 3 is the same as above except without the leading slash
+		- group 4 is literally the remaining portion of the logline, starting right after the "postfix/$daemonName[###]: $HERE ..."
+
+	*/
 	remainder := logMatches[4]
 	switch process {
 	case "postfix":
@@ -327,6 +390,7 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 			} else {
 				e.msgsUnknownUnsupported.Inc()
 			}
+		// this could likely be completely removed and nothing would change
 		case "lmtp":
 			if lmtpMatches := lmtpPipeSMTPLine.FindStringSubmatch(remainder); lmtpMatches != nil {
 				addToHistogramVec(e.lmtpDelays, lmtpMatches[2], "LMTP pdelay", "before_queue_manager")
@@ -336,6 +400,7 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 			} else {
 				e.msgsUnknownUnsupported.Inc()
 			}
+		// also could likely be removed
 		case "pipe":
 			if pipeMatches := lmtpPipeSMTPLine.FindStringSubmatch(remainder); pipeMatches != nil {
 				addToHistogramVec(e.pipeDelays, pipeMatches[2], "PIPE pdelay", pipeMatches[1], "before_queue_manager")
@@ -345,6 +410,7 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 			} else {
 				e.msgsUnknownUnsupported.Inc()
 			}
+		// technically could potentially be relevant to operation, though not to mail deliverability
 		case "qmgr":
 			if qmgrInsertMatches := qmgrInsertLine.FindStringSubmatch(remainder); qmgrInsertMatches != nil {
 				addToHistogram(e.qmgrInsertsSize, qmgrInsertMatches[1], "QMGR size")
@@ -477,6 +543,9 @@ type PostfixCollector struct {
 	msgsDeferredTries prometheus.Counter
 	msgsCleanupLines  prometheus.Counter
 
+	// NOTE: for testing
+	msgsNotmatched prometheus.Counter
+
 	// NOTE: reminder: figure this out
 	individualDefers prometheus.Counter
 
@@ -577,6 +646,12 @@ func NewPostfixCollector(showqPath string, logSrc LogSource, logUnsupportedLines
 			Namespace: postfixNamespace,
 			Name:      "qmgr_operations_total",
 			Help:      "Queue manager operations total",
+		}),
+
+		msgsNotmatched: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: postfixNamespace,
+			Name:      "TESTING_unqualified_lines_total",
+			Help:      "Lines that didn't match original regex AND that didn't meet my criteria",
 		}),
 
 		cleanupProcesses: prometheus.NewCounter(prometheus.CounterOpts{
