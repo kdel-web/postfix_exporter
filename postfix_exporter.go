@@ -843,6 +843,7 @@ func (e *PostfixCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- e.msgsDeferredTries.Desc()
 	ch <- e.msgsCleanupLines.Desc()
 	ch <- e.individualDefers.Desc()
+	ch <- e.msgsNotmatched.Desc()
 
 	// previous:
 	ch <- e.cleanupProcesses.Desc()
@@ -939,6 +940,7 @@ func (e *PostfixCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- e.msgsDeferredTries
 	ch <- e.msgsCleanupLines
 	ch <- e.individualDefers
+	ch <- e.msgsNotmatched
 
 	// previous:
 	ch <- e.cleanupProcesses
