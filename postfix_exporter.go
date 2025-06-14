@@ -512,6 +512,7 @@ func addToHistogramVec(h *prometheus.HistogramVec, value, fieldName string, labe
 	float, err := strconv.ParseFloat(value, 64)
 	if err != nil {
 		log.Printf("HISTOGRAM VEC: Couldn't convert value '%s' for %v: %v", value, fieldName, err)
+		// This is the one that's printing the errors to stdout
 	}
 	h.WithLabelValues(labels...).Observe(float)
 }
