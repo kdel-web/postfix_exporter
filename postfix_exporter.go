@@ -316,6 +316,8 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 		case postSmtpd:
 			if strings.Contains(line, postNoQueue) {
 				e.msgsNoQueue.Inc()
+			} else if msgIDMatch.MatchString(line) {
+				e.msgsAcceptedIn.Inc()
 			} else if strings.Contains(line, "disconnect") {
 				e.sSmtpdDisconnects.Inc()
 			} else if strings.Contains(line, "connect") {
@@ -502,14 +504,14 @@ func (e *PostfixCollector) addToUnsupportedLine(line string, subprocess string, 
 func addToHistogram(h prometheus.Histogram, value, fieldName string) {
 	float, err := strconv.ParseFloat(value, 64)
 	if err != nil {
-		log.Printf("Couldn't convert value '%s' for %v: %v", value, fieldName, err)
+		log.Printf("HISTOGRAM: Couldn't convert value '%s' for %v: %v", value, fieldName, err)
 	}
 	h.Observe(float)
 }
 func addToHistogramVec(h *prometheus.HistogramVec, value, fieldName string, labels ...string) {
 	float, err := strconv.ParseFloat(value, 64)
 	if err != nil {
-		log.Printf("Couldn't convert value '%s' for %v: %v", value, fieldName, err)
+		log.Printf("HISTOGRAM VEC: Couldn't convert value '%s' for %v: %v", value, fieldName, err)
 	}
 	h.WithLabelValues(labels...).Observe(float)
 }
