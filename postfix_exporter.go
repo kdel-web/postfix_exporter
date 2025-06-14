@@ -379,6 +379,7 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 					e.cleanupRejects.Inc()
 				} else {
 					e.msgsUnknownUnsupported.Inc()
+					infoLine(line)
 				}
 			// this could likely be completely removed and nothing would change
 			case "lmtp":
@@ -389,6 +390,7 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 					addToHistogramVec(e.lmtpDelays, lmtpMatches[5], "LMTP xdelay", "transmission")
 				} else {
 					e.msgsUnknownUnsupported.Inc()
+					infoLine(line)
 				}
 			// also could likely be removed
 			case "pipe":
@@ -399,6 +401,7 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 					addToHistogramVec(e.pipeDelays, pipeMatches[5], "PIPE xdelay", pipeMatches[1], "transmission")
 				} else {
 					e.msgsUnknownUnsupported.Inc()
+					infoLine(line)
 				}
 			// technically could potentially be relevant to operation, though not to mail deliverability
 			case "qmgr":
@@ -411,6 +414,7 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 					e.qmgrExpires.Inc()
 				} else {
 					e.msgsUnknownUnsupported.Inc()
+					infoLine(line)
 				}
 			case "smtp":
 				if smtpMatches := lmtpPipeSMTPLine.FindStringSubmatch(remainder); smtpMatches != nil {
@@ -430,6 +434,7 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 					e.smtpConnectionTimedOut.Inc()
 				} else {
 					e.msgsUnknownUnsupported.Inc()
+					infoLine(line)
 				}
 			case "smtpd":
 				if strings.HasPrefix(remainder, "connect from ") {
@@ -452,31 +457,37 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 					e.smtpdTLSConnects.WithLabelValues(smtpdTLSMatches[1:]...).Inc()
 				} else {
 					e.msgsUnknownUnsupported.Inc()
+					infoLine(line)
 				}
 			case "bounce":
 				if bounceMatches := bounceNonDeliveryLine.FindStringSubmatch(remainder); bounceMatches != nil {
 					e.bounceNonDelivery.Inc()
 				} else {
 					e.msgsUnknownUnsupported.Inc()
+					infoLine(line)
 				}
 			case "virtual":
 				if strings.HasSuffix(remainder, ", status=sent (delivered to maildir)") {
 					e.virtualDelivered.Inc()
 				} else {
 					e.msgsUnknownUnsupported.Inc()
+					infoLine(line)
 				}
 			default:
 				e.msgsUnknownUnsupported.Inc()
+				infoLine(line)
 			}
 		case "opendkim":
 			if opendkimMatches := opendkimSignatureAdded.FindStringSubmatch(remainder); opendkimMatches != nil {
 				e.opendkimSignatureAdded.WithLabelValues(opendkimMatches[1], opendkimMatches[2]).Inc()
 			} else {
 				e.msgsUnknownUnsupported.Inc()
+				infoLine(line)
 			}
 		default:
 			// Unknown log entry format.
 			e.msgsUnknownUnsupported.Inc()
+			infoLine(line)
 		}
 		// These are being counted as "Unknown" / "Unsupported", but it is expected
 		// that this number is not zero, as not all lines include relevant or notable information.
@@ -488,6 +499,7 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 		//
 	} else {
 		e.msgsUnknownUnsupported.Inc()
+		infoLine(line)
 		return
 	}
 }
