@@ -26,7 +26,7 @@ var (
 
 func init() {
 	flag.Parse()
-	if *cmdLogfile == "" || *cmdListenAddr == "" || *cmdMetricsPath == "" || *cmdShowqPath == "" {
+	if *cmdLogfile == "" || *cmdListenAddr == "" || *cmdMetricsPath == "" {
 		log.Fatalln("Expected parameters were not provided. Quitting")
 	}
 }

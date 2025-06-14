@@ -547,7 +547,7 @@ type PostfixCollector struct {
 	msgsNotmatched prometheus.Counter
 
 	// NOTE: reminder: figure this out
-	individualDefers prometheus.Counter
+	//individualDefers prometheus.Counter
 
 	// Original Metrics
 	// Metrics that should persist after refreshes, based on logs.
@@ -842,7 +842,7 @@ func (e *PostfixCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- e.msgsBounced.Desc()
 	ch <- e.msgsDeferredTries.Desc()
 	ch <- e.msgsCleanupLines.Desc()
-	ch <- e.individualDefers.Desc()
+	//ch <- e.individualDefers.Desc()
 	ch <- e.msgsNotmatched.Desc()
 
 	// previous:
@@ -939,7 +939,7 @@ func (e *PostfixCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- e.msgsBounced
 	ch <- e.msgsDeferredTries
 	ch <- e.msgsCleanupLines
-	ch <- e.individualDefers
+	//ch <- e.individualDefers
 	ch <- e.msgsNotmatched
 
 	// previous:
