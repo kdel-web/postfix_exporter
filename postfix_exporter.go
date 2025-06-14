@@ -310,63 +310,50 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 	// currently there is technically one capturing group, but the regexp.FindStringSubmatch has len 2, because 0 is the full match
 	// for our purposes, 0 and 1 should be the same
 
-	if logMatches == nil {
-		if newLogMatches != nil {
-			newProcess := newLogMatches[1]
-			switch newProcess {
-			case postSmtpd:
-				if strings.Contains(line, postNoQueue) {
-					e.msgsNoQueue.Inc()
-				} else if strings.Contains(line, "disconnect") {
-					e.sSmtpdDisconnects.Inc()
-				} else if strings.Contains(line, "connect") {
-					e.sSmtpdConnects.Inc()
-				} // there will be other lines but they are not relevant
+	if newLogMatches != nil {
+		newProcess := newLogMatches[1]
+		switch newProcess {
+		case postSmtpd:
+			if strings.Contains(line, postNoQueue) {
+				e.msgsNoQueue.Inc()
+			} else if strings.Contains(line, "disconnect") {
+				e.sSmtpdDisconnects.Inc()
+			} else if strings.Contains(line, "connect") {
+				e.sSmtpdConnects.Inc()
+			} // there will be other lines but they are not relevant
 
-			case postFast, postSlow, postMed, postRes:
-				if lineDelays := msgDelaysMatch.FindStringSubmatch(line); lineDelays != nil {
-					findDelays := strings.Split(line, "/")
-					if strings.Contains(line, postSent) {
-						e.msgsSent.Inc()
-						// if problems with last value in these functions, remove the last value; set as "" instead of "sent_msgs"
-						// they're supposed to be "labels" in prometheus speak
-						// and I'm not sure about them
-						addToHistogramVec(e.smtpDelays, findDelays[2], "before_queue_manager", "sent_msgs")
-						addToHistogramVec(e.smtpDelays, findDelays[3], "queue_manager", "sent_msgs")
-						addToHistogramVec(e.smtpDelays, findDelays[4], "connection_setup", "sent_msgs")
-						addToHistogramVec(e.smtpDelays, findDelays[5], "transmission", "sent_msgs")
-					} else if strings.Contains(line, postDefer) {
-						e.msgsDeferredTries.Inc()
-						addToHistogramVec(e.smtpDelays, findDelays[2], "before_queue_manager", "deferred_msgs")
-						addToHistogramVec(e.smtpDelays, findDelays[3], "queue_manager", "deferred_msgs")
-						addToHistogramVec(e.smtpDelays, findDelays[4], "connection_setup", "deferred_msgs")
-						addToHistogramVec(e.smtpDelays, findDelays[5], "transmission", "deferred_msgs")
-					} else if strings.Contains(line, postBounce) {
-						e.msgsBounced.Inc()
-						addToHistogramVec(e.smtpDelays, findDelays[2], "before_queue_manager", "bounced_msgs")
-						addToHistogramVec(e.smtpDelays, findDelays[3], "queue_manager", "bounced_msgs")
-						addToHistogramVec(e.smtpDelays, findDelays[4], "connection_setup", "bounced_msgs")
-						addToHistogramVec(e.smtpDelays, findDelays[5], "transmission", "bounced_msgs")
-					}
+		case postFast, postSlow, postMed, postRes:
+			if lineDelays := msgDelaysMatch.FindStringSubmatch(line); lineDelays != nil {
+				findDelays := strings.Split(line, "/")
+				if strings.Contains(line, postSent) {
+					e.msgsSent.Inc()
+					// if problems with last value in these functions, remove the last value; set as "" instead of "sent_msgs"
+					// they're supposed to be "labels" in prometheus speak
+					// and I'm not sure about them
+					addToHistogramVec(e.smtpDelays, findDelays[2], "before_queue_manager", "sent_msgs")
+					addToHistogramVec(e.smtpDelays, findDelays[3], "queue_manager", "sent_msgs")
+					addToHistogramVec(e.smtpDelays, findDelays[4], "connection_setup", "sent_msgs")
+					addToHistogramVec(e.smtpDelays, findDelays[5], "transmission", "sent_msgs")
+				} else if strings.Contains(line, postDefer) {
+					e.msgsDeferredTries.Inc()
+					addToHistogramVec(e.smtpDelays, findDelays[2], "before_queue_manager", "deferred_msgs")
+					addToHistogramVec(e.smtpDelays, findDelays[3], "queue_manager", "deferred_msgs")
+					addToHistogramVec(e.smtpDelays, findDelays[4], "connection_setup", "deferred_msgs")
+					addToHistogramVec(e.smtpDelays, findDelays[5], "transmission", "deferred_msgs")
+				} else if strings.Contains(line, postBounce) {
+					e.msgsBounced.Inc()
+					addToHistogramVec(e.smtpDelays, findDelays[2], "before_queue_manager", "bounced_msgs")
+					addToHistogramVec(e.smtpDelays, findDelays[3], "queue_manager", "bounced_msgs")
+					addToHistogramVec(e.smtpDelays, findDelays[4], "connection_setup", "bounced_msgs")
+					addToHistogramVec(e.smtpDelays, findDelays[5], "transmission", "bounced_msgs")
 				}
-			case postClean:
-				e.msgsCleanupLines.Inc()
 			}
+		case postClean:
+			e.msgsCleanupLines.Inc()
 		}
-
-		// These are being counted as "Unknown" / "Unsupported", but it is expected
-		// that this number is not zero, as not all lines include relevant or notable information.
-		// An example might be info regarding an untrusted SMTP connection-- SMTP servers
-		// may use certificates that are not publicly available, but that's still the domain,
-		// the mail still goes there, doesn't really matter that it's 'untrusted'.
-		// **If this number is high, (or if any additional smtp rules based on sender/recipient are added),
-		// this may require additional review.
-		//
-	} else {
-		e.msgsUnknownUnsupported.Inc()
-		return
 	}
-	if len(logMatches) > 1 {
+
+	if logMatches != nil {
 		process := logMatches[1]
 		// level := logMatches[5] // was only used for collecting unknown loglines. changed to counter
 		/*
@@ -489,6 +476,17 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 			// Unknown log entry format.
 			e.msgsUnknownUnsupported.Inc()
 		}
+		// These are being counted as "Unknown" / "Unsupported", but it is expected
+		// that this number is not zero, as not all lines include relevant or notable information.
+		// An example might be info regarding an untrusted SMTP connection-- SMTP servers
+		// may use certificates that are not publicly available, but that's still the domain,
+		// the mail still goes there, doesn't really matter that it's 'untrusted'.
+		// **If this number is high, (or if any additional smtp rules based on sender/recipient are added),
+		// this may require additional review.
+		//
+	} else {
+		e.msgsUnknownUnsupported.Inc()
+		return
 	}
 }
 
@@ -545,7 +543,7 @@ type PostfixCollector struct {
 	msgsDeferredTries prometheus.Counter
 	msgsCleanupLines  prometheus.Counter
 
-	// NOTE: for testing
+	// NOTE: for testing // will be removed
 	msgsNotmatched prometheus.Counter
 
 	// NOTE: reminder: figure this out
