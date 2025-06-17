@@ -2,7 +2,7 @@
 // PROGRAM HAS BEEN MODIFIED FROM ITS ORIGINAL IMPLEMENTATION
 // PLEASE REVIEW README.md
 // **
-// Original copyright and licensing information has been retained,
+// Original copyright and licensing information retained,
 // though the application has been modified to fit specific implementation criteria
 //////////////////////////////////////////////////////////////////////////////////////
 
@@ -44,15 +44,18 @@ const (
 	postfixNamespace = "Postfix"
 	postSmtpd        = "postfix/smtpd"
 	postNoQueue      = "NOQUEUE"
-	//postSmtp = "postfix/smtp"
-	postFast   = "postfix-fast/smtp"
-	postSlow   = "postfix-slow/smtp"
-	postMed    = "postfix-medium/smtp"
-	postRes    = "postfix-restrictive/smtp"
-	postSent   = "status=sent"
-	postDefer  = "status=deferred"
-	postBounce = "status=bounced"
-	postClean  = "postfix/cleanup"
+	postSmtp         = "postfix/smtp"
+	postFast         = "postfix-fast/smtp"
+	postSlow         = "postfix-slow/smtp"
+	postMed          = "postfix-medium/smtp"
+	postRes          = "postfix-restrictive/smtp"
+	postSent         = "status=sent"
+	postDefer        = "status=deferred"
+	postBounce       = "status=bounced"
+	postClean        = "postfix/cleanup"
+	postQmgr         = "postfix/qmgr"
+	postOpendkim     = "opendkim"
+	postDiscard      = "postfix/discard"
 )
 
 var (
@@ -88,7 +91,7 @@ var (
 	smtpdLostConnectionLine             = regexp.MustCompile(`^lost connection after (\w+) from `)
 	smtpdSASLAuthenticationFailuresLine = regexp.MustCompile(`^warning: \S+: SASL \S+ authentication failed: `)
 	smtpdTLSLine                        = regexp.MustCompile(`^(\S+) TLS connection established from \S+: (\S+) with cipher (\S+) \((\d+)/(\d+) bits\)`)
-	opendkimSignatureAdded              = regexp.MustCompile(`^[\w\d]+: DKIM-Signature field added \(s=(\w+), d=(.*)\)$`)
+	opendkimSignatureAdded              = regexp.MustCompile(`[\w\d]+: DKIM-Signature field added \(s=(\w+), d=(.*)\)`)
 	bounceNonDeliveryLine               = regexp.MustCompile(`: sender non-delivery notification: `)
 )
 
@@ -322,39 +325,56 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 				e.sSmtpdDisconnects.Inc()
 			} else if strings.Contains(line, "connect") {
 				e.sSmtpdConnects.Inc()
-			} // there will be other lines but they are not relevant
+			} else {
+				infoLine("SMTPD ignores: ", line)
+				// there will be other lines but they are not relevant
+			}
 
-		case postFast, postSlow, postMed, postRes:
+		case postSmtp, postFast, postSlow, postMed, postRes:
 			if lineDelays := msgDelaysMatch.FindStringSubmatch(line); lineDelays != nil {
-				findDelays := strings.Split(line, "/")
-				if strings.Contains(line, postSent) {
+				splitDelays := strings.Split(lineDelays[1], "/")
+				switch {
+				case strings.Contains(line, postSent):
 					e.msgsSent.Inc()
 					// if problems with last value in these functions, remove the last value; set as "" instead of "sent_msgs"
 					// they're supposed to be "labels" in prometheus speak
 					// and I'm not sure about them
-					addToHistogramVec(e.smtpDelays, findDelays[2], "before_queue_manager", "sent_msgs")
-					addToHistogramVec(e.smtpDelays, findDelays[3], "queue_manager", "sent_msgs")
-					addToHistogramVec(e.smtpDelays, findDelays[4], "connection_setup", "sent_msgs")
-					addToHistogramVec(e.smtpDelays, findDelays[5], "transmission", "sent_msgs")
-				} else if strings.Contains(line, postDefer) {
+					addToHistogramVec(e.smtpDelays, splitDelays[0], "before_queue_manager", "")
+					addToHistogramVec(e.smtpDelays, splitDelays[1], "queue_manager", "")
+					addToHistogramVec(e.smtpDelays, splitDelays[2], "connection_setup", "")
+					addToHistogramVec(e.smtpDelays, splitDelays[3], "transmission", "")
+				case strings.Contains(line, postDefer):
 					e.msgsDeferredTries.Inc()
-					addToHistogramVec(e.smtpDelays, findDelays[2], "before_queue_manager", "deferred_msgs")
-					addToHistogramVec(e.smtpDelays, findDelays[3], "queue_manager", "deferred_msgs")
-					addToHistogramVec(e.smtpDelays, findDelays[4], "connection_setup", "deferred_msgs")
-					addToHistogramVec(e.smtpDelays, findDelays[5], "transmission", "deferred_msgs")
-				} else if strings.Contains(line, postBounce) {
+					addToHistogramVec(e.smtpDelays, splitDelays[0], "before_queue_manager", "")
+					addToHistogramVec(e.smtpDelays, splitDelays[1], "queue_manager", "")
+					addToHistogramVec(e.smtpDelays, splitDelays[2], "connection_setup", "")
+					addToHistogramVec(e.smtpDelays, splitDelays[3], "transmission", "")
+				case strings.Contains(line, postBounce):
 					e.msgsBounced.Inc()
-					addToHistogramVec(e.smtpDelays, findDelays[2], "before_queue_manager", "bounced_msgs")
-					addToHistogramVec(e.smtpDelays, findDelays[3], "queue_manager", "bounced_msgs")
-					addToHistogramVec(e.smtpDelays, findDelays[4], "connection_setup", "bounced_msgs")
-					addToHistogramVec(e.smtpDelays, findDelays[5], "transmission", "bounced_msgs")
+					addToHistogramVec(e.smtpDelays, splitDelays[0], "before_queue_manager", "")
+					addToHistogramVec(e.smtpDelays, splitDelays[1], "queue_manager", "")
+					addToHistogramVec(e.smtpDelays, splitDelays[2], "connection_setup", "")
+					addToHistogramVec(e.smtpDelays, splitDelays[3], "transmission", "")
+				default:
+					infoLine("INFO DEBUG: 'delays=' match, default case. Check 'status=***' line: ", line)
 				}
 			}
+
 		case postClean:
 			e.msgsCleanupLines.Inc()
+		case postQmgr:
+			e.sQmgrOperations.Inc()
+		case postOpendkim:
+			if opendkimMatches := opendkimSignatureAdded.FindStringSubmatch(line); opendkimMatches != nil {
+				e.sOpenDKIM.WithLabelValues(opendkimMatches[1], opendkimMatches[2]).Inc()
+			} else {
+				infoLine("DEBUG: Expecting but did not receive OpenDKIM Match: ", line)
+			}
 		default:
-			e.msgsUnknownUnsupported.Inc()
-			infoLine("* No Match - New Regex Info *: ", line)
+			if !strings.Contains(line, postDiscard) {
+				e.msgsUnknownUnsupported.Inc()
+				infoLine("*New Regex Matchers* Not Matched: ", line)
+			}
 		}
 	}
 
@@ -363,10 +383,10 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 		// level := logMatches[5] // was only used for collecting unknown loglines. changed to counter
 		/*
 			ORIGINAL REGEX NOTES
-			- group 1 will only ever be "postfix" or "opendkim" (then there is the default case at bottom obvs)
+			- group 1 will only ever be "postfix" or "opendkim" (then there is default case at bottom)
 			- group 2 is "/smtp" || "/discard" || "/qmgr" || "/scache" || "smtpd" etc
 			- group 3 is the same as above except without the leading slash
-			- group 4 is literally the remaining portion of the logline, starting right after the "postfix/$daemonName[###]: $HERE ..."
+			- group 4 is the remaining portion of the logline, starting right after the "postfix/$daemonName[###]: $HERE ..."
 
 		*/
 		remainder := logMatches[4]
@@ -376,13 +396,20 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 			subprocess := logMatches[3]
 			switch subprocess {
 			case "cleanup":
+				// not all valid cleanup lines contain 'message-id' signifier
 				if strings.Contains(remainder, ": message-id=<") {
+					e.cleanupProcesses.Inc()
+					// account for `replace: header Received: ` and `replace: header Message-ID`
+				} else if strings.Contains(remainder, ": replace: header ") {
+					e.cleanupProcesses.Inc()
+					// account for `prepend: header Subject:`
+				} else if strings.Contains(remainder, ": prepend: header Subject:") {
 					e.cleanupProcesses.Inc()
 				} else if strings.Contains(remainder, ": reject: ") {
 					e.cleanupRejects.Inc()
 				} else {
 					e.msgsUnknownUnsupported.Inc()
-					infoLine("Orig Regex: case 'cleanup': ", line)
+					infoLine("Original Regex: case 'cleanup': ", line)
 				}
 			// this could likely be completely removed and nothing would change
 			case "lmtp":
@@ -393,7 +420,7 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 					addToHistogramVec(e.lmtpDelays, lmtpMatches[5], "LMTP xdelay", "transmission")
 				} else {
 					e.msgsUnknownUnsupported.Inc()
-					infoLine("Orig Regex: case 'lmtp': ", line)
+					infoLine("Original Regex: case 'lmtp': ", line)
 				}
 			// also could likely be removed
 			case "pipe":
@@ -404,7 +431,7 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 					addToHistogramVec(e.pipeDelays, pipeMatches[5], "PIPE xdelay", pipeMatches[1], "transmission")
 				} else {
 					e.msgsUnknownUnsupported.Inc()
-					infoLine("Orig Regex: case 'pipe': ", line)
+					infoLine("Original Regex: case 'pipe': ", line)
 				}
 			// technically could potentially be relevant to operation, though not to mail deliverability
 			case "qmgr":
@@ -417,7 +444,7 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 					e.qmgrExpires.Inc()
 				} else {
 					e.msgsUnknownUnsupported.Inc()
-					infoLine("Orig Regex: case 'qmgr': ", line)
+					infoLine("Original Regex: case 'qmgr': ", line)
 				}
 			case "smtp":
 				if smtpMatches := lmtpPipeSMTPLine.FindStringSubmatch(remainder); smtpMatches != nil {
@@ -437,7 +464,7 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 					e.smtpConnectionTimedOut.Inc()
 				} else {
 					e.msgsUnknownUnsupported.Inc()
-					infoLine("Orig Regex: case 'smtp': ", line)
+					infoLine("Original Regex: case 'smtp': ", line)
 				}
 			case "smtpd":
 				if strings.HasPrefix(remainder, "connect from ") {
@@ -460,37 +487,39 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 					e.smtpdTLSConnects.WithLabelValues(smtpdTLSMatches[1:]...).Inc()
 				} else {
 					e.msgsUnknownUnsupported.Inc()
-					infoLine("Orig Regex: case 'smtpd': ", line)
+					infoLine("Original Regex: case 'smtpd': ", line)
 				}
 			case "bounce":
 				if bounceMatches := bounceNonDeliveryLine.FindStringSubmatch(remainder); bounceMatches != nil {
 					e.bounceNonDelivery.Inc()
 				} else {
 					e.msgsUnknownUnsupported.Inc()
-					infoLine("Orig Regex: case 'bounce': ", line)
+					infoLine("Original Regex: case 'bounce': ", line)
 				}
 			case "virtual":
 				if strings.HasSuffix(remainder, ", status=sent (delivered to maildir)") {
 					e.virtualDelivered.Inc()
 				} else {
 					e.msgsUnknownUnsupported.Inc()
-					infoLine("Orig Regex: case 'virtual': ", line)
+					infoLine("Original Regex: case 'virtual': ", line)
 				}
 			default:
-				e.msgsUnknownUnsupported.Inc()
-				infoLine("Orig Regex: default 'subprocess': ", line)
+				if !strings.Contains(line, postDiscard) {
+					e.msgsUnknownUnsupported.Inc()
+					infoLine("Original Regex: default 'subprocess': ", line)
+				}
 			}
 		case "opendkim":
 			if opendkimMatches := opendkimSignatureAdded.FindStringSubmatch(remainder); opendkimMatches != nil {
 				e.opendkimSignatureAdded.WithLabelValues(opendkimMatches[1], opendkimMatches[2]).Inc()
 			} else {
 				e.msgsUnknownUnsupported.Inc()
-				infoLine("Orig Regex: case 'opendkim': ", line)
+				infoLine("Original Regex: case 'opendkim': ", line)
 			}
 		default:
 			// Unknown log entry format.
 			e.msgsUnknownUnsupported.Inc()
-			infoLine("Orig Regex: DEFAULT: ", line)
+			infoLine("Original Regex: case DEFAULT: ", line)
 		}
 		// These are being counted as "Unknown" / "Unsupported", but it is expected
 		// that this number is not zero, as not all lines include relevant or notable information.
@@ -499,22 +528,15 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 		// the mail still goes there, doesn't really matter that it's 'untrusted'.
 		// **If this number is high, (or if any additional smtp rules based on sender/recipient are added),
 		// this may require additional review.
-		//
 	} else {
-		e.msgsUnknownUnsupported.Inc()
-		infoLine("WARN: NO REGEX MATCH: ", line)
-		return
+		//e.msgsUnknownUnsupported.Inc()
+		infoLine("INFO: Original Regex - Not Matched: ", line)
+		// expected lines here are ANY of the 'postfix-fast/smtp', 'postfix-***/smtp' which are already being counted in new regex patterns above,
+		// also the majority of the NOQUEUES, which are also being counted in new regex patterns above.
+		// also the 'Untrusted TLS connection established ...' and 'statistics' lines, which are generally irrelevant
 	}
+	return
 }
-
-/*
-func (e *PostfixCollector) addToUnsupportedLine(line string, subprocess string, level string) {
-	if e.logUnsupportedLines {
-		log.Printf("Unsupported Line: %v", line)
-	}
-	e.unsupportedLogEntries.WithLabelValues(subprocess, level).Inc()
-}
-*/
 
 func addToHistogram(h prometheus.Histogram, value, fieldName string) {
 	float, err := strconv.ParseFloat(value, 64)
@@ -541,8 +563,6 @@ type PostfixCollector struct {
 
 	targetShowqPath string
 	targetLogfile   LogSource
-	//logUnsupportedLines bool
-	// translated to `msgsUnknownUnsuported` which presumably is irrelevant anyway
 
 	// Added Metrics
 	msgsUnknownUnsupported prometheus.Counter
@@ -552,14 +572,10 @@ type PostfixCollector struct {
 	sSmtpdConnects         prometheus.Counter
 	sSmtpdDisconnects      prometheus.Counter
 	sQmgrOperations        prometheus.Counter
-	// NOTE: reminder: fast, med, slow, restrictive, etc.
-	// seems like one could use CounterVec for this
-	// aka "same Desc, but have different values for their variable labels"
-	// "collect same thing [sent mail] """pArTiTiOnEd""" by various dimensions [fast, slow, etc]"
-
-	msgsBounced       prometheus.Counter
-	msgsDeferredTries prometheus.Counter
-	msgsCleanupLines  prometheus.Counter
+	sOpenDKIM              *prometheus.CounterVec
+	msgsBounced            prometheus.Counter
+	msgsDeferredTries      prometheus.Counter
+	msgsCleanupLines       prometheus.Counter
 
 	// NOTE: for testing // will be removed
 	msgsNotmatched prometheus.Counter
@@ -609,7 +625,7 @@ func NewPostfixCollector(showqPath string, logSrc LogSource, logUnsupportedLines
 		msgsUnknownUnsupported: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: postfixNamespace,
 			Name:      "unknown_maillog_lines_total",
-			Help:      "Count of unknown (unmatched) maillog lines. Formerly known as 'unsupported line'. Most likely irrelevant in terms of mail sending",
+			Help:      "Count of unmatched maillog lines. Formerly known as 'unsupported line'",
 		}),
 
 		msgsAcceptedIn: prometheus.NewCounter(prometheus.CounterOpts{
@@ -645,19 +661,19 @@ func NewPostfixCollector(showqPath string, logSrc LogSource, logUnsupportedLines
 		msgsCleanupLines: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: postfixNamespace,
 			Name:      "message_cleanup_lines_total",
-			Help:      "Number of cleanup lines (expected: two lines for every message)",
+			Help:      "Number of cleanup operations",
 		}),
 
 		sSmtpdConnects: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: postfixNamespace,
 			Name:      "smtpd_connections_total",
-			Help:      "Number of SMTPD connections (reminder that each connection may include more than one message)",
+			Help:      "Number of SMTPD connections total. (Each connection may include more than one message)",
 		}),
 
 		sSmtpdDisconnects: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: postfixNamespace,
 			Name:      "smtpd_disconnects_total",
-			Help:      "Number of SMTPD disconnects (reminder that this is virtually irrelevant)",
+			Help:      "Number of SMTPD disconnects total",
 		}),
 
 		sQmgrOperations: prometheus.NewCounter(prometheus.CounterOpts{
@@ -666,10 +682,18 @@ func NewPostfixCollector(showqPath string, logSrc LogSource, logUnsupportedLines
 			Help:      "Queue manager operations total",
 		}),
 
+		sOpenDKIM: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: postfixNamespace,
+			Name:      "opendkim_signed_lines",
+			Help:      "opendkim_signed_msgs_total",
+		},
+			[]string{"subject", "domain"},
+		),
+
 		msgsNotmatched: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: postfixNamespace,
-			Name:      "TESTING_unqualified_lines_total",
-			Help:      "Lines that didn't match original regex AND that didn't meet my criteria",
+			Name:      "unqualified_lines_total",
+			Help:      "Lines that didn't match any regex combination",
 		}),
 
 		cleanupProcesses: prometheus.NewCounter(prometheus.CounterOpts{
@@ -688,7 +712,6 @@ func NewPostfixCollector(showqPath string, logSrc LogSource, logUnsupportedLines
 			Help:      "Total number of messages not accepted by cleanup.",
 		}),
 		lmtpDelays: prometheus.NewHistogramVec(
-			// we don't use lmtp
 			prometheus.HistogramOpts{
 				Namespace: "postfix",
 				Name:      "lmtp_delivery_delay_seconds",
@@ -822,7 +845,7 @@ func NewPostfixCollector(showqPath string, logSrc LogSource, logUnsupportedLines
 			prometheus.CounterOpts{
 				Namespace: "opendkim",
 				Name:      "signatures_added_total",
-				Help:      "Total number of messages signed. (all messages should be signed)",
+				Help:      "Total number of messages signed",
 			},
 			[]string{"subject", "domain"},
 		),
@@ -860,8 +883,9 @@ func (e *PostfixCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- e.msgsBounced.Desc()
 	ch <- e.msgsDeferredTries.Desc()
 	ch <- e.msgsCleanupLines.Desc()
-	//ch <- e.individualDefers.Desc()
 	ch <- e.msgsNotmatched.Desc()
+	e.sOpenDKIM.Describe(ch)
+	//ch <- e.individualDefers.Desc()
 
 	// previous:
 	ch <- e.cleanupProcesses.Desc()
@@ -957,8 +981,9 @@ func (e *PostfixCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- e.msgsBounced
 	ch <- e.msgsDeferredTries
 	ch <- e.msgsCleanupLines
-	//ch <- e.individualDefers
 	ch <- e.msgsNotmatched
+	e.sOpenDKIM.Collect(ch)
+	//ch <- e.individualDefers
 
 	// previous:
 	ch <- e.cleanupProcesses
