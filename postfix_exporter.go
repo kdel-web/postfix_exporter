@@ -39,23 +39,21 @@ import (
 )
 
 const (
-	// primarily to prevent typos in code below
-	// also for maintainbility perhaps etc
 	postfixNamespace = "Postfix"
-	postSmtpd        = "postfix/smtpd"
 	postNoQueue      = "NOQUEUE"
+	postSmtpd        = "postfix/smtpd"
 	postSmtp         = "postfix/smtp"
 	postFast         = "postfix-fast/smtp"
 	postSlow         = "postfix-slow/smtp"
 	postMed          = "postfix-medium/smtp"
 	postRes          = "postfix-restrictive/smtp"
+	postQmgr         = "postfix/qmgr"
+	postClean        = "postfix/cleanup"
+	postDiscard      = "postfix/discard"
 	postSent         = "status=sent"
 	postDefer        = "status=deferred"
 	postBounce       = "status=bounced"
-	postClean        = "postfix/cleanup"
-	postQmgr         = "postfix/qmgr"
 	postOpendkim     = "opendkim"
-	postDiscard      = "postfix/discard"
 )
 
 var (
@@ -65,15 +63,9 @@ var (
 		[]string{"path"}, nil)
 
 	// Added parsing patterns.
-	//msgLineMatch = regexp.MustCompile(`(postfix(-slow|-fast|-medium|-restrictive)?\/(smtpd?|scache|cleanup|qmgr|bounce|error|warning|fatal|panic|discard))`)
-	//newMsgLineMatch = regexp.MustCompile(`opendkim|(postfix)(-slow|-fast|-medium|-restrictive)?\/(smtpd?|scache|cleanup|qmgr|bounce|error|warning|fatal|panic|discard)?`)
-	// even though there are additional subgroups defined, most likely will only use either the full match [0] or first match [1]
-	// and then handle further processing from there.
-	// ackshually, here is a non-capturing group version:
-	// there will only be two groups; first group
+	// regex pattern was chosen to be used as a "pre-filter"; there is intentionally only one capturing group
 	newMsgLineMatch = regexp.MustCompile(`(opendkim|postfix(?:-slow)?(?:-fast)?(?:-medium)?(?:-restrictive)?\/(?:smtpd?|scache|cleanup|qmgr|bounce|error|warning|fatal|panic|discard)?)`)
 	msgDelaysMatch  = regexp.MustCompile(`delays=([0-9.?\/]+)\,`)
-
 	msgIDMatch     = regexp.MustCompile(`\s([A-F0-9]{6,}):`)
 	emailAddrMatch = regexp.MustCompile(`<(.*?@?.*?)>:`)
 
