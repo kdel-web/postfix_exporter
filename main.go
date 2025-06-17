@@ -13,12 +13,10 @@ import (
 
 var (
 	ctx = context.Background()
-	// NOTE: intending to retain flags for better drop-in
-	// though also adjusting to hyphens for consistency
-	cmdLogfile = flag.String("postfix.logfile-path", "/var/log/maillog", "Full path to mail log file for parsing")
-
-	cmdDebug = flag.Bool("debug", false, "Enable printing of arbitrary debug messages to stdout for troubleshooting purposes")
-	//targetLogSnooze = flag.String("sleep-time", "5", "Seconds to sleep after hitting EOF on mail log file")
+	// NOTE: retaining flags for better drop-in, though
+	// they have been adjusted to hyphens for consistency
+	cmdLogfile     = flag.String("postfix.logfile-path", "/var/log/maillog", "Full path to mail log file for parsing")
+	cmdDebug       = flag.Bool("debug", false, "Enable printing of arbitrary debug messages to stdout for troubleshooting purposes")
 	cmdListenAddr  = flag.String("web.listen-address", ":9003", "Address on which to listen for scraping")
 	cmdMetricsPath = flag.String("web.telemetry-path", "/metrics", "Path on which to expose metrics")
 	cmdShowqPath   = flag.String("postfix.showq-path", "/var/spool/postfix/public/showq", "Path to Postfix showq socket")

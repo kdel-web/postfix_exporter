@@ -34,10 +34,11 @@ var (
 	targetChoice  = flag.Bool("kumina", false, "Use kumina regex instead")
 	targetUnknown = flag.Bool("uprint", false, "Enable printing of 'unknown' lines")
 
-	newMsgLineMatch = regexp.MustCompile(`(opendkim|postfix(?:-slow)?(?:-fast)?(?:-medium)?(?:-restrictive)?\/(?:smtpd?|scache|cleanup|qmgr|bounce|error|warning|fatal|panic|discard)?)`)
-	msgDelaysMatch  = regexp.MustCompile(`delays=([0-9.?\/]+)\,`)
-	msgIDMatch      = regexp.MustCompile(`\s([A-F0-9]{6,}):`)
-	emailAddrMatch  = regexp.MustCompile(`<(.*?@?.*?)>:`)
+	newMsgLineMatch        = regexp.MustCompile(`(opendkim|postfix(?:-slow)?(?:-fast)?(?:-medium)?(?:-restrictive)?\/(?:smtpd?|scache|cleanup|qmgr|bounce|error|warning|fatal|panic|discard)?)`)
+	msgDelaysMatch         = regexp.MustCompile(`delays=([0-9.?\/]+)\,`)
+	msgIDMatch             = regexp.MustCompile(`\s([A-F0-9]{6,}):`)
+	emailAddrMatch         = regexp.MustCompile(`<(.*?@?.*?)>:`)
+	opendkimSignatureAdded = regexp.MustCompile(`[\w\d]+: DKIM-Signature field added \(s=(\w+), d=(.*)\)`)
 
 	// kumina regex
 	logLine = regexp.MustCompile(` ?(postfix|opendkim)(/(\w+))?\[\d+\]: ((?:(warning|error|fatal|panic): )?.*)`)
@@ -107,9 +108,15 @@ func main() {
 			//fmt.Printf("%q\n", newLogMatches[1])
 			newProcess := newLogMatches[1]
 			switch newProcess {
-			case postSmtp, postFast, postSlow, postMed, postRes, "opendkim":
+			//case postSmtp, postFast, postSlow, postMed, postRes:
+			//	fmt.Println(newProcess, " -> ", line)
+			case "opendkim":
 				matchCounter++
-				fmt.Println(newProcess, " -> ", line)
+				if opendkimMatches := opendkimSignatureAdded.FindStringSubmatch(line); opendkimMatches != nil {
+					fmt.Println("Match: ", line)
+					fmt.Println(len(opendkimMatches))
+				}
+
 			}
 
 		}

@@ -369,6 +369,8 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 				e.sOpenDKIM.WithLabelValues(opendkimMatches[1], opendkimMatches[2]).Inc()
 			} else {
 				infoLine("DEBUG: Expecting but did not receive OpenDKIM Match: ", line)
+				// a line that might be expected here is '... no signing table match for ...'
+				// (based on dev logs)
 			}
 		default:
 			if !strings.Contains(line, postDiscard) {
