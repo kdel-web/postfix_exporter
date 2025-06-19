@@ -194,7 +194,7 @@ def main(
                             "tries": 1,
                         }
 
-            elif "postfix/bounce" in line:
+            elif "status=bounced" in line:
                 MsgCounter["bounced"] += 1
                 m = get_regex("msg_id_pattern").findall(line)
                 if m:
