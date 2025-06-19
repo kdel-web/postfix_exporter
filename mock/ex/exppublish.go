@@ -3,10 +3,12 @@ package main
 import (
 	"bufio"
 	"context"
+	"expvar"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -32,6 +34,7 @@ var (
 	fFile    = flag.String("file", TESTFILE, "File to read from")
 	fInfo    = flag.Bool("debug", false, "Enable arbitrary info lines printed to stdout")
 	fClose   = flag.Bool("close", false, "Close file and exit program instead of tailing")
+	fPort    = flag.String("listen-address", ":9004", "HTTP listen address for expvar")
 
 	// mostly troubleshooting / debugging but perhaps useful otherwise
 	//fSleep      = flag.Duration("s", 5, "Time to sleep between message counter prints")
@@ -57,33 +60,67 @@ func init() {
 	}
 }
 
+type MessageCounter struct {
+	Accepted_in    *expvar.Int
+	Sent           *expvar.Int
+	No_queue       *expvar.Int
+	Bounced        *expvar.Int
+	Deferred_tries *expvar.Int
+}
+
+func newMessageCounter() *MessageCounter {
+	return &MessageCounter{
+		// NewInt calls Publish as part of its creation
+		Accepted_in:    expvar.NewInt("Accepted_in"),
+		Sent:           expvar.NewInt("Sent"),
+		No_queue:       expvar.NewInt("No_queue"),
+		Bounced:        expvar.NewInt("Bounced"),
+		Deferred_tries: expvar.NewInt("Deferred_tries"),
+	}
+}
+
 func main() {
 	infoLine("Debug printing enabled")
-	var wg sync.WaitGroup
+	var (
+		wg sync.WaitGroup
+	)
+
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	defer cancelFunc()
 	// perhaps this is not even needed since it doesn't seem to function any differently with or without it
 
-	runningTally := newMessageCounter()
 	lines := make(chan string)
+	MCount := newMessageCounter()
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		infoLine("Call runner")
 		fileRunner(ctx, *fFile, lines)
-		// this likely poor design stems from not comprehending context
+		// this seeming poor design stems from not comprehending context
 	}()
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		infoLine("Call consumer")
-		runningTally.maillogWorker(ctx, lines)
+		MCount.maillogWorker(ctx, lines)
+	}()
+
+	//http.Handle("/debug/expvars", expvar.Handler())
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		infoLine("Start http server")
+		err := http.ListenAndServe(*fPort, nil)
+		if err != nil {
+			log.Fatalln("Error starting HTTP server", err)
+		}
 	}()
 
 	wg.Wait()
-	fmt.Printf("%+v\n", *runningTally)
+	//fmt.Printf("%+v\n", RunningTally)
 }
 
 // log line producer
@@ -124,14 +161,6 @@ func fileRunner(ctx context.Context, file string, lines chan<- string) {
 	}
 }
 
-type MessageCounter struct {
-	Accepted_in    int
-	Sent           int
-	No_queue       int
-	Bounced        int
-	Deferred_tries int
-}
-
 // log line consumer
 // receives log lines and parses them
 func (m *MessageCounter) maillogWorker(ctx context.Context, lines <-chan string) {
@@ -155,12 +184,12 @@ func (m *MessageCounter) maillogWorker(ctx context.Context, lines <-chan string)
 						if *fNoQ {
 							fmt.Print("No Queue Line ->:", line)
 						}
-						m.No_queue++
+						m.No_queue.Add(1)
 						if noq_addr := emailAddrMatch.FindStringSubmatch(line); noq_addr != nil {
 							fmt.Println("No Queues: ", noq_addr[1])
 						}
 					} else if msgIDMatch.MatchString(line) {
-						m.Accepted_in++
+						m.Accepted_in.Add(1)
 						// do something with queue id
 					} else {
 						if *fSMTPD || *fAllIgnored {
@@ -173,19 +202,19 @@ func (m *MessageCounter) maillogWorker(ctx context.Context, lines <-chan string)
 					}
 					switch {
 					case strings.Contains(line, postSent):
-						m.Sent++
+						m.Sent.Add(1)
 						// queue id? addr?
 						if *fSent {
 							fmt.Print("Sent Message ->:", line)
 						}
 					case strings.Contains(line, postDefer):
-						m.Deferred_tries++
+						m.Deferred_tries.Add(1)
 						// get queue id and address, etc
 						if *fDefer {
 							fmt.Print("Deferred Message ->:", line)
 						}
 					case strings.Contains(line, postBounce):
-						m.Bounced++
+						m.Bounced.Add(1)
 						// get queue id and address, etc
 						if *fBounce {
 							fmt.Print("Bounced Message ->:", line)
@@ -213,16 +242,6 @@ func (m *MessageCounter) maillogWorker(ctx context.Context, lines <-chan string)
 //type messageDetails struct {
 //	deferred_addrs []string
 //}
-
-func newMessageCounter() *MessageCounter {
-	return &MessageCounter{
-		Accepted_in:    0,
-		Sent:           0,
-		No_queue:       0,
-		Bounced:        0,
-		Deferred_tries: 0,
-	}
-}
 
 func infoLine(a ...any) {
 	if *fInfo {
