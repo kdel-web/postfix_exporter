@@ -1,5 +1,9 @@
 package main
 
+// This program tails the default log text file for Postfix SMTP server,
+// and parses the log lines via regex patterns to expose message counting stastics
+// via an http endpoint.
+
 import (
 	"bufio"
 	"context"
@@ -14,19 +18,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-)
-
-const (
-	postNoQueue = "NOQUEUE"
-	postSmtpd   = "postfix/smtpd"
-	postSmtp    = "postfix/smtp"
-	postFast    = "postfix-fast/smtp"
-	postSlow    = "postfix-slow/smtp"
-	postMed     = "postfix-medium/smtp"
-	postRes     = "postfix-restrictive/smtp"
-	postSent    = "status=sent"
-	postDefer   = "status=deferred"
-	postBounce  = "status=bounced"
 )
 
 var (
@@ -60,25 +51,6 @@ func init() {
 	}
 }
 
-type MessageCounter struct {
-	Accepted_in    *expvar.Int
-	Sent           *expvar.Int
-	No_queue       *expvar.Int
-	Bounced        *expvar.Int
-	Deferred_tries *expvar.Int
-}
-
-func newMessageCounter() *MessageCounter {
-	return &MessageCounter{
-		// NewInt calls Publish as part of its creation
-		Accepted_in:    expvar.NewInt("Accepted_in"),
-		Sent:           expvar.NewInt("Sent"),
-		No_queue:       expvar.NewInt("No_queue"),
-		Bounced:        expvar.NewInt("Bounced"),
-		Deferred_tries: expvar.NewInt("Deferred_tries"),
-	}
-}
-
 func main() {
 	infoLine("Debug printing enabled")
 	var (
@@ -90,7 +62,9 @@ func main() {
 	// perhaps this is not even needed since it doesn't seem to function any differently with or without it
 
 	lines := make(chan string)
-	MCount := newMessageCounter()
+	MCount := NewMessageCounter()
+	MDetails := NewMessageDetails()
+	expvar.Publish("No Queue Addrs", MDetails)
 
 	wg.Add(1)
 	go func() {
@@ -104,10 +78,11 @@ func main() {
 	go func() {
 		defer wg.Done()
 		infoLine("Call consumer")
-		MCount.maillogWorker(ctx, lines)
+		maillogWorker(ctx, MCount, MDetails, lines)
 	}()
 
 	//http.Handle("/debug/expvars", expvar.Handler())
+	// "only needed if adjusting the path" or something
 
 	wg.Add(1)
 	go func() {
@@ -120,7 +95,6 @@ func main() {
 	}()
 
 	wg.Wait()
-	//fmt.Printf("%+v\n", RunningTally)
 }
 
 // log line producer
@@ -162,8 +136,8 @@ func fileRunner(ctx context.Context, file string, lines chan<- string) {
 }
 
 // log line consumer
-// receives log lines and parses them
-func (m *MessageCounter) maillogWorker(ctx context.Context, lines <-chan string) {
+// receives log lines and parses them, providing counts for message stats
+func maillogWorker(ctx context.Context, m *MessageCounter, d *MessageDetails, lines <-chan string) {
 	if ctx.Err() != nil {
 		infoLine("maillogWorker ctx err")
 		return
@@ -186,7 +160,9 @@ func (m *MessageCounter) maillogWorker(ctx context.Context, lines <-chan string)
 						}
 						m.No_queue.Add(1)
 						if noq_addr := emailAddrMatch.FindStringSubmatch(line); noq_addr != nil {
-							fmt.Println("No Queues: ", noq_addr[1])
+							//fmt.Println("No Queues: ", noq_addr[1])
+							d.addNoQueue(noq_addr[1])
+
 						}
 					} else if msgIDMatch.MatchString(line) {
 						m.Accepted_in.Add(1)
@@ -210,6 +186,7 @@ func (m *MessageCounter) maillogWorker(ctx context.Context, lines <-chan string)
 					case strings.Contains(line, postDefer):
 						m.Deferred_tries.Add(1)
 						// get queue id and address, etc
+						// and use addDefer method to count
 						if *fDefer {
 							fmt.Print("Deferred Message ->:", line)
 						}
@@ -236,15 +213,5 @@ func (m *MessageCounter) maillogWorker(ctx context.Context, lines <-chan string)
 			infoLine("maillogWorker done")
 			return
 		}
-	}
-}
-
-//type messageDetails struct {
-//	deferred_addrs []string
-//}
-
-func infoLine(a ...any) {
-	if *fInfo {
-		fmt.Println("Info Line ->: ", a)
 	}
 }
