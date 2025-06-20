@@ -21,11 +21,12 @@ import (
 )
 
 var (
-	TESTFILE = "/home/kdellinger/postfix_exporter/outputs/BogusAmalgamTest.log"
-	fFile    = flag.String("file", TESTFILE, "File to read from")
-	fInfo    = flag.Bool("debug", false, "Enable arbitrary info lines printed to stdout")
-	fClose   = flag.Bool("close", false, "Close file and exit program instead of tailing")
-	fPort    = flag.String("listen-address", ":9004", "HTTP listen address for expvar")
+	//TESTFILE = "/home/kdellinger/postfix_exporter/outputs/BogusAmalgamTest.log"
+	DEFAULTFILE = "/var/log/maillog"
+	fFile       = flag.String("file", DEFAULTFILE, "File to read from")
+	fInfo       = flag.Bool("debug", false, "Enable arbitrary info lines printed to stdout")
+	fClose      = flag.Bool("close", false, "Close file and exit program instead of tailing")
+	fPort       = flag.String("listen-address", ":9004", "HTTP listen address for expvar")
 
 	// mostly troubleshooting / debugging but perhaps useful otherwise
 	//fSleep      = flag.Duration("s", 5, "Time to sleep between message counter prints")
