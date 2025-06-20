@@ -42,37 +42,45 @@ func NewMessageCounter() *MessageCounter {
 	}
 }
 
-type MessageDetails struct {
-	No_queue_addresses map[string]bool
-	//Individual_defers  map[string]int
+type NoQueueAddrs struct {
+	NoQueues map[string]bool
 }
 
-func NewMessageDetails() *MessageDetails {
-	return &MessageDetails{
-		No_queue_addresses: map[string]bool{},
-		//Individual_defers:  map[string]int{},
+type IndividDefers struct {
+	Individual_Defers map[string]int
+}
+
+func NewNoQueueAddrs() *NoQueueAddrs {
+	m := make(map[string]bool, 1)
+	return &NoQueueAddrs{
+		NoQueues: m,
 	}
 }
 
-func (d *MessageDetails) addNoQueue(a string) {
-	for k, _ := range d.No_queue_addresses {
-		if a == k {
-			return
-		}
+func NewIndividDefers() *IndividDefers {
+	m := make(map[string]int, 1)
+	return &IndividDefers{
+		Individual_Defers: m,
 	}
-	d.No_queue_addresses[a] = true
 }
 
-func (d *MessageDetails) String() string {
-	v, _ := json.Marshal(d.No_queue_addresses)
+func (d *NoQueueAddrs) addNoQueue(a string) {
+	d.NoQueues[a] = true
+}
+
+func (d *IndividDefers) addDefer(a string) {
+	d.Individual_Defers[a]++
+}
+
+func (d *NoQueueAddrs) String() string {
+	v, _ := json.Marshal(d.NoQueues)
 	return string(v)
 }
 
-//func (d *MessageDetails) addDefer(a string) {
-//	d.Individual_defers[a]++
-//}
-
-// to then be used with Publish, and will use Func for v Var on these field names
+func (d *IndividDefers) String() string {
+	v, _ := json.Marshal(d.Individual_Defers)
+	return string(v)
+}
 
 func infoLine(a ...any) {
 	if *fInfo {

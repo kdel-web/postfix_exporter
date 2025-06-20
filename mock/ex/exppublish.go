@@ -41,7 +41,7 @@ var (
 	newMsgLineMatch = regexp.MustCompile(`(opendkim|postfix(?:-slow)?(?:-fast)?(?:-medium)?(?:-restrictive)?\/(?:smtpd?|scache|cleanup|qmgr|bounce|error|warning|fatal|panic|discard)?)`)
 	msgDelaysMatch  = regexp.MustCompile(`delays=([0-9.?\/]+)\,`)
 	msgIDMatch      = regexp.MustCompile(`\s([A-F0-9]{6,}):`)
-	emailAddrMatch  = regexp.MustCompile(`<(.*?@?.*?)>:`)
+	emailAddrMatch  = regexp.MustCompile(`<(.*?@?.*?)>`) // removed `:` between last > and `
 )
 
 func init() {
@@ -61,10 +61,13 @@ func main() {
 	defer cancelFunc()
 	// perhaps this is not even needed since it doesn't seem to function any differently with or without it
 
-	lines := make(chan string)
+	lines := make(chan string, 10)
+
 	MCount := NewMessageCounter()
-	MDetails := NewMessageDetails()
-	expvar.Publish("No Queue Addrs", MDetails)
+	NoQ := NewNoQueueAddrs()
+	InDefers := NewIndividDefers()
+	expvar.Publish("No Queue Email Addresses", NoQ)
+	expvar.Publish("Individually Deferred Tries", InDefers)
 
 	wg.Add(1)
 	go func() {
@@ -78,7 +81,7 @@ func main() {
 	go func() {
 		defer wg.Done()
 		infoLine("Call consumer")
-		maillogWorker(ctx, MCount, MDetails, lines)
+		maillogWorker(ctx, MCount, NoQ, InDefers, lines)
 	}()
 
 	//http.Handle("/debug/expvars", expvar.Handler())
@@ -137,7 +140,7 @@ func fileRunner(ctx context.Context, file string, lines chan<- string) {
 
 // log line consumer
 // receives log lines and parses them, providing counts for message stats
-func maillogWorker(ctx context.Context, m *MessageCounter, d *MessageDetails, lines <-chan string) {
+func maillogWorker(ctx context.Context, m *MessageCounter, q *NoQueueAddrs, i *IndividDefers, lines <-chan string) {
 	if ctx.Err() != nil {
 		infoLine("maillogWorker ctx err")
 		return
@@ -161,8 +164,10 @@ func maillogWorker(ctx context.Context, m *MessageCounter, d *MessageDetails, li
 						m.No_queue.Add(1)
 						if noq_addr := emailAddrMatch.FindStringSubmatch(line); noq_addr != nil {
 							//fmt.Println("No Queues: ", noq_addr[1])
-							d.addNoQueue(noq_addr[1])
-
+							q.addNoQueue(noq_addr[1])
+							if *fNoQ {
+								fmt.Println("No Queue Email Address ->:", noq_addr[1])
+							}
 						}
 					} else if msgIDMatch.MatchString(line) {
 						m.Accepted_in.Add(1)
@@ -185,16 +190,28 @@ func maillogWorker(ctx context.Context, m *MessageCounter, d *MessageDetails, li
 						}
 					case strings.Contains(line, postDefer):
 						m.Deferred_tries.Add(1)
-						// get queue id and address, etc
-						// and use addDefer method to count
 						if *fDefer {
 							fmt.Print("Deferred Message ->:", line)
 						}
+						if emaddr := emailAddrMatch.FindStringSubmatch(line); emaddr != nil {
+							i.addDefer(emaddr[1])
+							if *fDefer {
+								fmt.Println("Deferred Email Address ->:", emaddr[1])
+							}
+						}
+						// get queue id and address, etc
+						// and use addDefer method to count
+
 					case strings.Contains(line, postBounce):
 						m.Bounced.Add(1)
 						// get queue id and address, etc
 						if *fBounce {
 							fmt.Print("Bounced Message ->:", line)
+						}
+						if baddr := emailAddrMatch.FindStringSubmatch(line); baddr != nil {
+							if *fBounce {
+								fmt.Println("Bounced Email Address ->:", baddr[1])
+							}
 						}
 					default:
 						if *fSMTP || *fAllIgnored {
