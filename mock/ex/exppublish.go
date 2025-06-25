@@ -20,14 +20,14 @@ import (
 )
 
 var (
-	DEFAULTFILE = "/home/kdellinger/postfix_exporter/outputs/BogusAmalgamTest.log"
-	//DEFAULTFILE = "/var/log/maillog"
-	fFile    = flag.String("file", DEFAULTFILE, "File to read from")
-	fInfo    = flag.Bool("debug", false, "Enable arbitrary info lines printed to stdout")
-	fClose   = flag.Bool("close", false, "Close file and exit program instead of tailing")
-	fPort    = flag.String("listen-address", ":9004", "HTTP listen address for expvar")
-	fCDefers = flag.Bool("defer-count", false, "Print total count of deferred (only valid with --close)")
-	fCNoQs   = flag.Bool("noq-count", false, "Print no queue email addresses (only valid with --close)")
+	//DEFAULTFILE = "/home/kdellinger/postfix_exporter/outputs/BogusAmalgamTest.log"
+	DEFAULTFILE = "/var/log/maillog"
+	fFile       = flag.String("file", DEFAULTFILE, "File to read from")
+	fInfo       = flag.Bool("debug", false, "Enable arbitrary info lines printed to stdout")
+	fClose      = flag.Bool("close", false, "Close file and exit program instead of tailing")
+	fPort       = flag.String("listen-address", ":9004", "HTTP listen address for expvar")
+	fCDefers    = flag.Bool("defer-count", false, "Print total count of deferred (only valid with --close)")
+	fCNoQs      = flag.Bool("noq-count", false, "Print no queue email addresses (only valid with --close)")
 
 	// mostly troubleshooting / debugging but perhaps useful otherwise
 	//fSleep      = flag.Duration("s", 5, "Time to sleep between message counter prints")

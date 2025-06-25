@@ -66,8 +66,8 @@ var (
 	// regex pattern was chosen to be used as a "pre-filter"; there is intentionally only one capturing group
 	newMsgLineMatch = regexp.MustCompile(`(opendkim|postfix(?:-slow)?(?:-fast)?(?:-medium)?(?:-restrictive)?\/(?:smtpd?|scache|cleanup|qmgr|bounce|error|warning|fatal|panic|discard)?)`)
 	msgDelaysMatch  = regexp.MustCompile(`delays=([0-9.?\/]+)\,`)
-	msgIDMatch     = regexp.MustCompile(`\s([A-F0-9]{6,}):`)
-	emailAddrMatch = regexp.MustCompile(`<(.*?@?.*?)>:`)
+	msgIDMatch      = regexp.MustCompile(`\s([A-F0-9]{6,}):`)
+	emailAddrMatch  = regexp.MustCompile(`<(.*?@?.*?)>:`)
 
 	// Previous patterns for parsing log messages.
 	logLine                             = regexp.MustCompile(` ?(postfix|opendkim)(/(\w+))?\[\d+\]: ((?:(warning|error|fatal|panic): )?.*)`)
@@ -293,10 +293,10 @@ func CollectShowqFromSocket(path string, ch chan<- prometheus.Metric) error {
 
 // CollectFromLogline collects metrict from a Postfix log line.
 func (e *PostfixCollector) CollectFromLogLine(line string) {
-	// the bread and butter babe, the sweet nectar jelly mumbo jumbo stew that be a-cookin in the kitchen
+	// primary metrics logic
 
-	// Strip off timestamp, hostname, etc.
-	// odd way to describe this-- a better way might be:
+	// "Strip off timestamp, hostname, etc."
+	// better description might be:
 	// 'this is how log lines are filtered for relevancy, and
 	// organized into groups in order to count/parse/extract data.'
 	// logMatches := logLine.FindStringSubmatch(line)
@@ -330,7 +330,6 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 					e.msgsSent.Inc()
 					// if problems with last value in these functions, remove the last value; set as "" instead of "sent_msgs"
 					// they're supposed to be "labels" in prometheus speak
-					// and I'm not sure about them
 					addToHistogramVec(e.smtpDelays, splitDelays[0], "before_queue_manager", "")
 					addToHistogramVec(e.smtpDelays, splitDelays[1], "queue_manager", "")
 					addToHistogramVec(e.smtpDelays, splitDelays[2], "connection_setup", "")
@@ -362,7 +361,6 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 			} else {
 				infoLine("DEBUG: Expecting but did not receive OpenDKIM Match: ", line)
 				// a line that might be expected here is '... no signing table match for ...'
-				// (based on dev logs)
 			}
 		default:
 			if !strings.Contains(line, postDiscard) {
@@ -405,7 +403,7 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 					e.msgsUnknownUnsupported.Inc()
 					infoLine("Original Regex: case 'cleanup': ", line)
 				}
-			// this could likely be completely removed and nothing would change
+			// this could be completely removed and nothing would change
 			case "lmtp":
 				if lmtpMatches := lmtpPipeSMTPLine.FindStringSubmatch(remainder); lmtpMatches != nil {
 					addToHistogramVec(e.lmtpDelays, lmtpMatches[2], "LMTP pdelay", "before_queue_manager")
@@ -416,7 +414,7 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 					e.msgsUnknownUnsupported.Inc()
 					infoLine("Original Regex: case 'lmtp': ", line)
 				}
-			// also could likely be removed
+			// also could be removed
 			case "pipe":
 				if pipeMatches := lmtpPipeSMTPLine.FindStringSubmatch(remainder); pipeMatches != nil {
 					addToHistogramVec(e.pipeDelays, pipeMatches[2], "PIPE pdelay", pipeMatches[1], "before_queue_manager")
@@ -427,7 +425,7 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 					e.msgsUnknownUnsupported.Inc()
 					infoLine("Original Regex: case 'pipe': ", line)
 				}
-			// technically could potentially be relevant to operation, though not to mail deliverability
+			// technically could potentially be relevant to operation, maybe, though not to mail deliverability
 			case "qmgr":
 				if qmgrInsertMatches := qmgrInsertLine.FindStringSubmatch(remainder); qmgrInsertMatches != nil {
 					addToHistogram(e.qmgrInsertsSize, qmgrInsertMatches[1], "QMGR size")
@@ -519,7 +517,7 @@ func (e *PostfixCollector) CollectFromLogLine(line string) {
 		// that this number is not zero, as not all lines include relevant or notable information.
 		// An example might be info regarding an untrusted SMTP connection-- SMTP servers
 		// may use certificates that are not publicly available, but that's still the domain,
-		// the mail still goes there, doesn't really matter that it's 'untrusted'.
+		// the mail still goes there, doesn't really matter that it's 'untrusted'; it's still valid TLS/SSL connection.
 		// **If this number is high, (or if any additional smtp rules based on sender/recipient are added),
 		// this may require additional review.
 	} else {
@@ -570,12 +568,6 @@ type PostfixCollector struct {
 	msgsBounced            prometheus.Counter
 	msgsDeferredTries      prometheus.Counter
 	msgsCleanupLines       prometheus.Counter
-
-	// NOTE: for testing // will be removed
-	msgsNotmatched prometheus.Counter
-
-	// NOTE: reminder: figure this out
-	//individualDefers prometheus.Counter
 
 	// Original Metrics
 	// Metrics that should persist after refreshes, based on logs.
@@ -661,7 +653,7 @@ func NewPostfixCollector(showqPath string, logSrc LogSource, logUnsupportedLines
 		sSmtpdConnects: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: postfixNamespace,
 			Name:      "smtpd_connections_total",
-			Help:      "Number of SMTPD connections total. (Each connection may include more than one message)",
+			Help:      "Number of SMTPD connections. (Each connection may include more than one message)",
 		}),
 
 		sSmtpdDisconnects: prometheus.NewCounter(prometheus.CounterOpts{
@@ -683,12 +675,6 @@ func NewPostfixCollector(showqPath string, logSrc LogSource, logUnsupportedLines
 		},
 			[]string{"subject", "domain"},
 		),
-
-		msgsNotmatched: prometheus.NewCounter(prometheus.CounterOpts{
-			Namespace: postfixNamespace,
-			Name:      "unqualified_lines_total",
-			Help:      "Lines that didn't match any regex combination",
-		}),
 
 		cleanupProcesses: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: "postfix",
@@ -877,9 +863,7 @@ func (e *PostfixCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- e.msgsBounced.Desc()
 	ch <- e.msgsDeferredTries.Desc()
 	ch <- e.msgsCleanupLines.Desc()
-	ch <- e.msgsNotmatched.Desc()
 	e.sOpenDKIM.Describe(ch)
-	//ch <- e.individualDefers.Desc()
 
 	// previous:
 	ch <- e.cleanupProcesses.Desc()
@@ -943,7 +927,6 @@ func (e *PostfixCollector) StartMetricCollection(ctx context.Context) {
 
 // Collect metrics from Postfix's showq socket and its log file.
 func (e *PostfixCollector) Collect(ch chan<- prometheus.Metric) {
-	// the bread and butter, the sweet nectar jelly mumbo jumbo stew that be a-cookin in the kitchen
 
 	err := CollectShowqFromSocket(e.targetShowqPath, ch)
 	if err == nil {
@@ -975,7 +958,6 @@ func (e *PostfixCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- e.msgsBounced
 	ch <- e.msgsDeferredTries
 	ch <- e.msgsCleanupLines
-	ch <- e.msgsNotmatched
 	e.sOpenDKIM.Collect(ch)
 	//ch <- e.individualDefers
 

@@ -13,13 +13,13 @@ import (
 
 var (
 	ctx = context.Background()
-	// NOTE: retaining flags for better drop-in, though
-	// they have been adjusted to hyphens for consistency
-	cmdLogfile     = flag.String("postfix.logfile-path", "/var/log/maillog", "Full path to mail log file for parsing")
+	// NOTE: third-library `kingpin` has been removed. In order to better support drop-in functionality,
+	// the flags have been retained; this includes the inconsistency between hyphens (-) and underscores (_).
+	cmdLogfile     = flag.String("postfix.logfile_path", "/var/log/postfix_exporter_input.log", "Full path to mail log file for parsing")
 	cmdDebug       = flag.Bool("debug", false, "Enable printing of arbitrary debug messages to stdout for troubleshooting purposes")
-	cmdListenAddr  = flag.String("web.listen-address", ":9003", "Address on which to listen for scraping")
+	cmdListenAddr  = flag.String("web.listen-address", ":9101", "Address on which to listen for scraping")
 	cmdMetricsPath = flag.String("web.telemetry-path", "/metrics", "Path on which to expose metrics")
-	cmdShowqPath   = flag.String("postfix.showq-path", "/var/spool/postfix/public/showq", "Path to Postfix showq socket")
+	cmdShowqPath   = flag.String("postfix.showq_path", "/var/spool/postfix/public/showq", "Path to Postfix showq socket")
 )
 
 func init() {
