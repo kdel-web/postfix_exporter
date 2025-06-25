@@ -16,17 +16,18 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 )
 
 var (
-	//TESTFILE = "/home/kdellinger/postfix_exporter/outputs/BogusAmalgamTest.log"
-	DEFAULTFILE = "/var/log/maillog"
-	fFile       = flag.String("file", DEFAULTFILE, "File to read from")
-	fInfo       = flag.Bool("debug", false, "Enable arbitrary info lines printed to stdout")
-	fClose      = flag.Bool("close", false, "Close file and exit program instead of tailing")
-	fPort       = flag.String("listen-address", ":9004", "HTTP listen address for expvar")
+	DEFAULTFILE = "/home/kdellinger/postfix_exporter/outputs/BogusAmalgamTest.log"
+	//DEFAULTFILE = "/var/log/maillog"
+	fFile    = flag.String("file", DEFAULTFILE, "File to read from")
+	fInfo    = flag.Bool("debug", false, "Enable arbitrary info lines printed to stdout")
+	fClose   = flag.Bool("close", false, "Close file and exit program instead of tailing")
+	fPort    = flag.String("listen-address", ":9004", "HTTP listen address for expvar")
+	fCDefers = flag.Bool("defer-count", false, "Print total count of deferred (only valid with --close)")
+	fCNoQs   = flag.Bool("noq-count", false, "Print no queue email addresses (only valid with --close)")
 
 	// mostly troubleshooting / debugging but perhaps useful otherwise
 	//fSleep      = flag.Duration("s", 5, "Time to sleep between message counter prints")
@@ -54,15 +55,10 @@ func init() {
 
 func main() {
 	infoLine("Debug printing enabled")
-	var (
-		wg sync.WaitGroup
-	)
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	defer cancelFunc()
 	// perhaps this is not even needed since it doesn't seem to function any differently with or without it
-
-	lines := make(chan string, 10)
 
 	MCount := NewMessageCounter()
 	NoQ := NewNoQueueAddrs()
@@ -70,166 +66,153 @@ func main() {
 	expvar.Publish("No Queue Email Addresses", NoQ)
 	expvar.Publish("Individually Deferred Tries", InDefers)
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		infoLine("Call runner")
-		fileRunner(ctx, *fFile, lines)
-		// this seeming poor design stems from not comprehending context
-	}()
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		infoLine("Call consumer")
-		maillogWorker(ctx, MCount, NoQ, InDefers, lines)
-	}()
-
 	//http.Handle("/debug/expvars", expvar.Handler())
 	// "only needed if adjusting the path" or something
+	if !*fClose {
+		go func() {
+			infoLine("Start http server")
+			err := http.ListenAndServe(*fPort, nil)
+			if err != nil {
+				log.Fatalln("Error starting HTTP server", err)
+			}
+		}()
+	}
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		infoLine("Start http server")
-		err := http.ListenAndServe(*fPort, nil)
-		if err != nil {
-			log.Fatalln("Error starting HTTP server", err)
-		}
-	}()
+	for line := range fileRunner(ctx, *fFile) {
+		maillogWorker(line, MCount, NoQ, InDefers)
+	}
+	fmt.Println("Message Counts:")
+	fmt.Printf("Accepted In:%7v\n", MCount.Accepted_in)
+	fmt.Printf("Sent Messages:%5v\n", MCount.Sent)
+	fmt.Printf("No Queues:%9v\n", MCount.No_queue)
+	fmt.Printf("Bounced:%11v\n", MCount.Bounced)
+	fmt.Printf("Deferred Tries:%4v\n", MCount.Deferred_tries)
+	if *fCDefers {
+		fmt.Println("Individual defers: ", InDefers.Individual_Defers)
+	}
+	if *fCNoQs {
+		fmt.Println("No Queue Addresses: ", NoQ.NoQueues)
+	}
 
-	wg.Wait()
 }
 
 // log line producer
 // tails (follows / sleeps ) opened file and
 // sends log lines through channel
-func fileRunner(ctx context.Context, file string, lines chan<- string) {
-	if ctx.Err() != nil {
-		infoLine("fileRunner ctx err")
-		return
-	}
+func fileRunner(ctx context.Context, file string) <-chan string {
 
 	ofile, err := os.Open(file)
 	if err != nil {
 		log.Fatalf("Error opening file: %q", file)
 	}
-	defer ofile.Close()
-
+	lines := make(chan string)
 	r := bufio.NewReader(ofile)
-	for {
-		line, err := r.ReadString('\n')
-		if err != nil {
-			if err == io.EOF {
-				infoLine("fileRunner: EOF")
-				if *fClose {
-					infoLine("`close` provided, cleaning up and exiting")
-					close(lines)
-					return
-					// both the close and the return are required for proper functionality
-					// I think the close is needed so the consumer can exit
-					// and I think the return is needed bc the waitgroup closure
-				}
-				time.Sleep(5 * time.Second)
-				continue
+
+	go func() {
+		defer ofile.Close()
+		for {
+			if ctx.Err() != nil {
+				infoLine("ctx fileRun done")
+				return
 			}
-			log.Fatalf("fileRunner: Error -> %q", err)
+			line, err := r.ReadString('\n')
+			if err != nil {
+				if err == io.EOF {
+					infoLine("fileRunner: EOF")
+					if *fClose {
+						infoLine("closing")
+						close(lines)
+						//<-ctx.Done()
+						return
+					}
+					time.Sleep(5 * time.Second)
+					continue
+				}
+				log.Fatalf("fileRunner: Error -> %q", err)
+			}
+			lines <- line
 		}
-		lines <- line
-	}
+	}()
+	return lines
 }
 
 // log line consumer
 // receives log lines and parses them, providing counts for message stats
-func maillogWorker(ctx context.Context, m *MessageCounter, q *NoQueueAddrs, i *IndividDefers, lines <-chan string) {
-	if ctx.Err() != nil {
-		infoLine("maillogWorker ctx err")
-		return
-	}
-	for line := range lines {
-		if line != "" {
-			lineMatch := newMsgLineMatch.FindStringSubmatch(line)
-			if lineMatch != nil {
-				if *fNotIgnored {
-					fmt.Print("Matched Line ->:", line)
+func maillogWorker(line string, m *MessageCounter, q *NoQueueAddrs, i *IndividDefers) {
+	lineMatch := newMsgLineMatch.FindStringSubmatch(line)
+	if lineMatch != nil {
+		if *fNotIgnored {
+			fmt.Print("Matched Line ->:", line)
+		}
+		switch lineMatch[1] {
+		case postSmtpd:
+			if *fSMTPD {
+				fmt.Print("SMTPD Line ->:", line)
+			}
+			if strings.Contains(line, postNoQueue) {
+				if *fNoQ {
+					fmt.Print("No Queue Line ->:", line)
 				}
-				switch lineMatch[1] {
-				case postSmtpd:
-					if *fSMTPD {
-						fmt.Print("SMTPD Line ->:", line)
+				m.No_queue.Add(1)
+				if noq_addr := emailAddrMatch.FindStringSubmatch(line); noq_addr != nil {
+					//fmt.Println("No Queues: ", noq_addr[1])
+					q.addNoQueue(noq_addr[1])
+					if *fNoQ {
+						fmt.Println("No Queue Email Address ->:", noq_addr[1])
 					}
-					if strings.Contains(line, postNoQueue) {
-						if *fNoQ {
-							fmt.Print("No Queue Line ->:", line)
-						}
-						m.No_queue.Add(1)
-						if noq_addr := emailAddrMatch.FindStringSubmatch(line); noq_addr != nil {
-							//fmt.Println("No Queues: ", noq_addr[1])
-							q.addNoQueue(noq_addr[1])
-							if *fNoQ {
-								fmt.Println("No Queue Email Address ->:", noq_addr[1])
-							}
-						}
-					} else if msgIDMatch.MatchString(line) {
-						m.Accepted_in.Add(1)
-						// do something with queue id
-					} else {
-						if *fSMTPD || *fAllIgnored {
-							fmt.Print("SMTPD Ignored Line ->:", line)
-						}
-					}
-				case postSmtp, postFast, postSlow, postMed, postRes:
-					if *fSMTP {
-						fmt.Print("SMTP Line ->:", line)
-					}
-					switch {
-					case strings.Contains(line, postSent):
-						m.Sent.Add(1)
-						// queue id? addr?
-						if *fSent {
-							fmt.Print("Sent Message ->:", line)
-						}
-					case strings.Contains(line, postDefer):
-						m.Deferred_tries.Add(1)
-						if *fDefer {
-							fmt.Print("Deferred Message ->:", line)
-						}
-						if emaddr := emailAddrMatch.FindStringSubmatch(line); emaddr != nil {
-							i.addDefer(emaddr[1])
-							if *fDefer {
-								fmt.Println("Deferred Email Address ->:", emaddr[1])
-							}
-						}
-						// get queue id and address, etc
-						// and use addDefer method to count
-
-					case strings.Contains(line, postBounce):
-						m.Bounced.Add(1)
-						// get queue id and address, etc
-						if *fBounce {
-							fmt.Print("Bounced Message ->:", line)
-						}
-						if baddr := emailAddrMatch.FindStringSubmatch(line); baddr != nil {
-							if *fBounce {
-								fmt.Println("Bounced Email Address ->:", baddr[1])
-							}
-						}
-					default:
-						if *fSMTP || *fAllIgnored {
-							fmt.Print("SMTP Ignored ->:", line)
-						}
-					}
-
 				}
+			} else if msgIDMatch.MatchString(line) {
+				m.Accepted_in.Add(1)
+				// do something with queue id
 			} else {
-				if *fAllIgnored {
-					fmt.Print("Unmatched & Ignored Line ->:", line)
+				if *fSMTPD || *fAllIgnored {
+					fmt.Print("SMTPD Ignored Line ->:", line)
 				}
 			}
-		} else {
-			// will never print
-			infoLine("maillogWorker done")
-			return
+		case postSmtp, postFast, postSlow, postMed, postRes:
+			if *fSMTP {
+				fmt.Print("SMTP Line ->:", line)
+			}
+			switch {
+			case strings.Contains(line, postSent):
+				m.Sent.Add(1)
+				// queue id? addr?
+				if *fSent {
+					fmt.Print("Sent Message ->:", line)
+				}
+			case strings.Contains(line, postDefer):
+				m.Deferred_tries.Add(1)
+				if *fDefer {
+					fmt.Print("Deferred Message ->:", line)
+				}
+				if emaddr := emailAddrMatch.FindStringSubmatch(line); emaddr != nil {
+					i.addDefer(emaddr[1])
+					if *fDefer {
+						fmt.Println("Deferred Email Address ->:", emaddr[1])
+					}
+				}
+				// get queue id and address, etc
+				// and use addDefer method to count
+			case strings.Contains(line, postBounce):
+				m.Bounced.Add(1)
+				// get queue id and address, etc
+				if *fBounce {
+					fmt.Print("Bounced Message ->:", line)
+				}
+				if baddr := emailAddrMatch.FindStringSubmatch(line); baddr != nil {
+					if *fBounce {
+						fmt.Println("Bounced Email Address ->:", baddr[1])
+					}
+				}
+			default:
+				if *fSMTP || *fAllIgnored {
+					fmt.Print("SMTP Ignored ->:", line)
+				}
+			}
+		}
+
+		if *fAllIgnored {
+			fmt.Print("Unmatched & Ignored Line ->:", line)
 		}
 	}
 }
